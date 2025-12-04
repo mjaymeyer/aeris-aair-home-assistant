@@ -232,7 +232,7 @@ much easier than fighting with a phone.
 
 3.  Assuming you entered valid credentials you should see the unit
     display OFF and the buttons should function.
-<img src="./media/image26.jpeg alt="" width="800"/>
+<img src="./media/image26.jpeg" alt="" width="800"/>
 
 ### Stage Two (MQTT and Display Customization)
 
