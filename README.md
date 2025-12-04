@@ -248,7 +248,7 @@ much easier than fighting with a phone.
     broadcast MQTT topic prefix if you like (such as if you have
     multiple Aeris Purifiers and you need them unique).
 
-3.  Hit save the and the unit will reboot once more and you should see
+3.  Hit save and the unit will reboot once more and you should see
     any display changes if you made them.
 
 ### Home Assistant
