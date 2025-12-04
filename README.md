@@ -74,7 +74,7 @@ versions and follow along.
 1.  Extract dfu-util to a folder. I've used C:\\DFU (no subfolders, you
     should be able to execute C:\\DFU\\dfu-util.exe)
 
-2.  Attach the micro-usb cable to the unit it, two LEDs should come on
+2.  Attach the micro-usb cable to the unit, two LEDs should come on
 
 <img src="./media/image7.jpeg" alt="" width="600"/>
 
