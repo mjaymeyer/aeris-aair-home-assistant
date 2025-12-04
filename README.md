@@ -237,7 +237,7 @@ much easier than fighting with a phone.
 ### Stage Two (MQTT and Display Customization)
 
 1.  In a web browser now navigate to the true IP of the air purifier on
-    your network, you should get the below page.
+    your network (such as http://192.168.0.32). If it doesn't load confirm that you are hitting the right device and that you are not using https://, you should get the below page.
 
 <img src="./media/image27.png" alt="" width="600"/>
 
