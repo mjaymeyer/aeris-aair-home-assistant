@@ -303,7 +303,7 @@ mqtt:
 
 If you don't want to flash a new .bin you can't see the source code of
 then you can build from source here. This part of the guide assumes you
-have ate least run through the driver install, backup, updating
+have at least run through the driver install, backup, updating
 bootloader, and updating the particle software sections.
 
 1.  In the root of your hard drive create a folder 'aeris_project'
