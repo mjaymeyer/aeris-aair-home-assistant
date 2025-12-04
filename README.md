@@ -282,6 +282,12 @@ mqtt:
       payload_on: "30"
       payload_off: "0"
       optimistic: false
+      state_value_template: >
+        {% if value == '0' %}
+          0
+        {% else %}
+          30
+        {% endif %}
 ```
 
 ## Alternative - Creating From Source Code
