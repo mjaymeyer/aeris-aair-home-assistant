@@ -1,5 +1,7 @@
 # Replacement Firmware for the Aeris Aair 3-in-1 Pro Air Purifier
 
+<img src="./media/animation.gif" alt=""/>
+
 This guide will walk you through flashing a new firmware onto the Aeris Aair 3-in-1 Pro Air Purifier, which will enable local control of the device over MQTT, which can then be added and controlled via Home Assistant. It also allows some small customization of the appearance of the top display.
 
 <br>
