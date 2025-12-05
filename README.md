@@ -202,7 +202,7 @@ NOTE: Your device may seem to freeze (like below) when it gets to "Switching dev
 
 ## Flashing the compiled binary
 
-1.  Download the Release mqtt_enabled_replacement_software.bin if you have not
+1.  Download the Release aerisFirmware.bin if you have not
     already, I placed it in the same folder as I put dfu-util. Put your
     device back into DFU mode if it is not.
 
@@ -214,7 +214,7 @@ NOTE: Your device may seem to freeze (like below) when it gets to "Switching dev
 3.  Simply run the below command to flash the new software, it should
     install very quickly.
 
-```dfu-util.exe -d 2b04:d006 -a 0 -s 0x080A0000:leave -D mqtt_enabled_replacement_software.bin```
+```dfu-util.exe -d 2b04:d006 -a 0 -s 0x080A0000:leave -D aerisFirmware.bin```
 >
 <img src="./media/image23.png" alt="" width="600"/>
 
