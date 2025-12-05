@@ -37,7 +37,7 @@ The guide below and the software linked to here are for flashing from Windows. I
 
 5.  [Particle Bootloader update](<https://github.com/particle-iot/device-os/releases/download/v3.3.0/photon-bootloader%403.3.0%2Blto.bin>)
 
-6.  [Replacement Software Binary](https://github.com/mjaymeyer/aeris-aair-home-assistant/releases/latest/download/mqtt_enabled_replacement_software.bin) (unless building from source)
+6.  [Replacement Software Binary](https://github.com/mjaymeyer/aeris-aair-home-assistant/releases) (unless building from source)
 
 <br>
 <br>
