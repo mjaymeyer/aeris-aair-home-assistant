@@ -8,7 +8,7 @@
 // -------------------------------------------------------------------------
 #define EEPROM_ADDR 0
 
-// This string automatically updates every time you hit Compile
+// Always updating string so each compile will reset unit back to initial setup
 const char* CURRENT_BUILD_SIG = __DATE__ " " __TIME__;
 
 struct Settings {
@@ -94,6 +94,15 @@ const byte CMD_HPMA_START[] = {0x68, 0x01, 0x01, 0x96};
 const byte CMD_PMS_WAKE[]   = {0x42, 0x4D, 0xE4, 0x00, 0x01, 0x01, 0x74}; 
 const byte CMD_PMS_ACTIVE[] = {0x42, 0x4D, 0xE1, 0x00, 0x01, 0x01, 0x71}; 
 
+// --- SMOOTHING VARIABLES FOR AQ SENSOR ---
+const int WINDOW = 10;      // Size of the moving average window
+int pm25Hist[WINDOW];       // Buffer for PM2.5 readings
+int pm10Hist[WINDOW];       // Buffer for PM10 readings
+int histIndex = 0;          // Current write position in the buffer
+bool histFilled = false;    // Track if we have enough data for a full average
+int zeroCount = 0;          // Counts consecutive zeros
+// --------------------------------------------------
+
 // Prototypes
 void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* body, Writer* result, void* reserved);
 void handleWebPortal(); 
@@ -107,6 +116,8 @@ STARTUP(System.set(SYSTEM_CONFIG_SOFTAP_PREFIX, "Aeris"));
 STARTUP(softap_set_application_page_handler(http_handler, nullptr));
 
 void setup() {
+    Serial.begin(9600);
+    
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
     pinMode(PIN_DISP_BL, OUTPUT); pinMode(PIN_RING_EN, OUTPUT);
@@ -160,7 +171,7 @@ void loadDefaults() {
 }
 
 void enterSetupMode() {
-    RGB.color(0, 0, 255); // Blue
+    RGB.color(0, 0, 255);
     tft.fillScreen(ILI9341_BLUE);
     tft.setTextColor(ILI9341_WHITE); tft.setTextSize(3); tft.setCursor(10, 50);
     tft.println("SETUP MODE");
@@ -175,7 +186,7 @@ void enterSetupMode() {
 }
 
 void enterNormalMode() {
-    RGB.color(255, 100, 0); // Orange
+    RGB.color(255, 100, 0);
     tft.fillScreen(ILI9341_BLACK);
     tft.setTextColor(ILI9341_WHITE); tft.setTextSize(2); tft.setCursor(10, 100);
     tft.println("Connecting...");
@@ -237,15 +248,28 @@ void loop() {
     }
 
     while(Serial1.available()) {
-        byte b = Serial1.read();
-        if(rxIndex < 128) rxBuffer[rxIndex++] = b;
-        lastRxTime = millis();
+            byte b = Serial1.read();
+            if(rxIndex < 128) rxBuffer[rxIndex++] = b;
+            lastRxTime = millis();
+        }
+        
+        if(rxIndex > 0 && millis() - lastRxTime > 50) {
+            
+            // --- START DEBUG BLOCK ---
+            Serial.print("RX Len: "); Serial.print(rxIndex); Serial.print(" Data: ");
+            for(int i=0; i < rxIndex; i++) {
+                // Print a leading zero if needed (e.g., "0F" instead of "F")
+                if(rxBuffer[i] < 0x10) Serial.print("0");
+                Serial.print(rxBuffer[i], HEX); 
+                Serial.print(" ");
+            }
+            Serial.println(); 
+            // --- END DEBUG BLOCK ---
+
+            processSensorData();
+            rxIndex = 0;
+        }
     }
-    if(rxIndex > 0 && millis() - lastRxTime > 50) {
-        processSensorData();
-        rxIndex = 0;
-    }
-}
 
 // Helper to generate the Select Dropdown
 void printColorSelect(TCPClient &c, String name, uint16_t selected) {
@@ -473,21 +497,21 @@ void sendRawByte(const byte* data, int len) {
     }
 }
 
-const int WINDOW = 10;
-int pm25Hist[WINDOW];
-int pm10Hist[WINDOW];
-int histIndex = 0;
-bool histFilled = false;
-
 int smooth(int *arr) {
     long sum = 0;
     int count = histFilled ? WINDOW : histIndex;
+    
+    // SAFETY CHECK: Prevent Divide by Zero crash
+    if (count == 0) return 0; 
+    
     for (int i = 0; i < count; i++) sum += arr[i];
     return sum / count;
 }
 
 void processSensorData() {
     int startIdx = -1;
+
+    // 1. Search for Custom Header 0x32 0x3D
     for (int i = 0; i < rxIndex - 1; i++) {
         if (rxBuffer[i] == 0x32 && rxBuffer[i+1] == 0x3D) {
             startIdx = i;
@@ -495,29 +519,58 @@ void processSensorData() {
         }
     }
 
-    if (startIdx != -1 && startIdx + 20 <= rxIndex) {
-        int pm10Val = (rxBuffer[startIdx + 10] << 8) + rxBuffer[startIdx + 11];
-        int pm25Val = (rxBuffer[startIdx + 12] << 8) + rxBuffer[startIdx + 13];
-
-        pm25Hist[histIndex] = pm25Val;
-        pm10Hist[histIndex] = pm10Val;
-        histIndex++;
-        if (histIndex >= WINDOW) {
-            histIndex = 0;
-            histFilled = true;
+    if (startIdx != -1 && startIdx + 32 <= rxIndex) {
+        
+        // 2. VERIFY CHECKSUM
+        int calcChecksum = 0;
+        // Sum bytes 0 to 29
+        for (int i = 0; i < 30; i++) {
+            calcChecksum += rxBuffer[startIdx + i];
         }
+        int sentChecksum = (rxBuffer[startIdx + 30] << 8) + rxBuffer[startIdx + 31];
 
-        int pm25Smooth = smooth(pm25Hist);
-        int pm10Smooth = smooth(pm10Hist);
+        if (calcChecksum == sentChecksum) {
+            // Checksum matches! Data is valid.
+            
+            // 3. READ STANDARD DATA
+            // Bytes 6-7: PM2.5 Standard
+            // Bytes 8-9: PM10 Standard
+            int pm25Val = (rxBuffer[startIdx + 6] << 8) + rxBuffer[startIdx + 7];
+            int pm10Val = (rxBuffer[startIdx + 8] << 8) + rxBuffer[startIdx + 9];
 
-        lastPM25 = String(pm25Smooth);
-        lastPM10 = String(pm10Smooth);
+            bool ignoreSample = false;
 
-        if (lightsOn) drawDynamicValues();
-        publishAll();
+            if (pm25Val == 0) {
+                zeroCount++;
+                if (zeroCount < 5) {
+                    ignoreSample = true; // Ignore the first 4 zeros
+                }
+            } else {
+                zeroCount = 0; // We saw a real number, reset counter
+            }
+
+            // Only update history if we aren't ignoring this sample
+            if (!ignoreSample) {
+                pm25Hist[histIndex] = pm25Val;
+                pm10Hist[histIndex] = pm10Val;
+                histIndex++;
+                if (histIndex >= WINDOW) {
+                    histIndex = 0;
+                    histFilled = true;
+                }
+            }
+
+            int pm25Smooth = smooth(pm25Hist);
+            int pm10Smooth = smooth(pm10Hist);
+
+            lastPM25 = String(pm25Smooth);
+            lastPM10 = String(pm10Smooth);
+
+            if (lightsOn) drawDynamicValues();
+            publishAll();
+        }
     }
 }
-
 
 void publishAll() {
     if (client != NULL && client->isConnected()) {
