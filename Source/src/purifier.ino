@@ -473,17 +473,51 @@ void sendRawByte(const byte* data, int len) {
     }
 }
 
+const int WINDOW = 10;
+int pm25Hist[WINDOW];
+int pm10Hist[WINDOW];
+int histIndex = 0;
+bool histFilled = false;
+
+int smooth(int *arr) {
+    long sum = 0;
+    int count = histFilled ? WINDOW : histIndex;
+    for (int i = 0; i < count; i++) sum += arr[i];
+    return sum / count;
+}
+
 void processSensorData() {
     int startIdx = -1;
-    for (int i=0; i < rxIndex-1; i++) { if (rxBuffer[i] == 0x32 && rxBuffer[i+1] == 0x3D) { startIdx = i; break; } }
-    if (startIdx != -1 && (startIdx + 20 <= rxIndex)) {
+    for (int i = 0; i < rxIndex - 1; i++) {
+        if (rxBuffer[i] == 0x32 && rxBuffer[i+1] == 0x3D) {
+            startIdx = i;
+            break;
+        }
+    }
+
+    if (startIdx != -1 && startIdx + 20 <= rxIndex) {
         int pm10Val = (rxBuffer[startIdx + 10] << 8) + rxBuffer[startIdx + 11];
         int pm25Val = (rxBuffer[startIdx + 12] << 8) + rxBuffer[startIdx + 13];
-        lastPM25 = String(pm25Val); lastPM10 = String(pm10Val);
-        if(lightsOn) drawDynamicValues(); 
+
+        pm25Hist[histIndex] = pm25Val;
+        pm10Hist[histIndex] = pm10Val;
+        histIndex++;
+        if (histIndex >= WINDOW) {
+            histIndex = 0;
+            histFilled = true;
+        }
+
+        int pm25Smooth = smooth(pm25Hist);
+        int pm10Smooth = smooth(pm10Hist);
+
+        lastPM25 = String(pm25Smooth);
+        lastPM10 = String(pm10Smooth);
+
+        if (lightsOn) drawDynamicValues();
         publishAll();
     }
 }
+
 
 void publishAll() {
     if (client != NULL && client->isConnected()) {
@@ -494,4 +528,5 @@ void publishAll() {
         client->publish(p + "sensor/pm25", lastPM25); delay(20);
         client->publish(p + "sensor/pm10", lastPM10);
     }
+
 }
