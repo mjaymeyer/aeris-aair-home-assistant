@@ -308,12 +308,24 @@ void handleWebPortal() {
             String mi = getVal("mi"); String mu = getVal("mu"); String mp = getVal("mp"); String mt = getVal("mt");
             String mpo = getVal("mpo");
             String rst = getVal("reset");
+            String dfu = getVal("dfu"); // <--- NEW: Get DFU param
             
             // Display & Colors
             String ffs = getVal("ffs"); String fx = getVal("fx"); String fy = getVal("fy");
             String pfs = getVal("pfs"); String px = getVal("px"); String py = getVal("py");
             String fc  = getVal("fc");  String pmlc = getVal("pmlc"); String pmvc = getVal("pmvc");
             
+            // --- NEW: DFU LOGIC ---
+            if (dfu == "1") {
+                client.println("<h1>Entering DFU Mode...</h1>"); 
+                client.println("<p>Device status LED will flash YELLOW. Connect USB to flash.</p>");
+                client.stop(); 
+                delay(1000); 
+                System.dfu(false); // Enter DFU mode
+                return;
+            }
+            // ----------------------
+
             if (rst == "1") {
                 // To force reset, we empty the signature. Next boot it won't match.
                 mySettings.build_signature[0] = 0; 
@@ -369,6 +381,11 @@ void handleWebPortal() {
             
             client.print("<br><input type='submit' value='SAVE' style='padding:10px;width:100%;background:blue;color:white;'></form>");
             
+            // --- NEW: DFU BUTTON ---
+            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='dfu' value='1'>");
+            client.print("<input type='submit' value='ENTER DFU MODE' style='background:orange;color:white;padding:10px;width:100%;'></form>");
+            // -----------------------
+
             client.print("<hr><form action='/save' method='GET'><input type='hidden' name='reset' value='1'>");
             client.print("<input type='submit' value='FACTORY RESET' style='background:red;color:white;padding:10px;width:100%;'></form>");
             client.print("</body></html>");
@@ -583,3 +600,4 @@ void publishAll() {
     }
 
 }
+
