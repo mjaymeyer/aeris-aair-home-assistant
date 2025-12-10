@@ -262,6 +262,8 @@ much easier than fighting with a phone.
 3.  Hit save and the unit will reboot once more and you should see
     any display changes if you made them.
 
+4.  Note that you can enter your purifier back into DFU Mode over this interface. This way you can flash a new firmware to it without having to unscrew the top to get to the board again.
+
 ### Home Assistant
 
 #### Defining Sensors and Fan
