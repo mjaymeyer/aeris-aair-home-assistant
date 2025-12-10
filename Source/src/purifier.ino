@@ -147,7 +147,7 @@ void setup() {
 void loadDefaults() {
     memset(&mySettings, 0, sizeof(mySettings));
     
-    // Save the CURRENT binary's timestamp so we don't reset on next boot
+    // Save the current binary's timestamp so we don't reset on next boot
     strncpy(mySettings.build_signature, CURRENT_BUILD_SIG, 24);
     
     strcpy(mySettings.mqtt_ip, ""); 
@@ -207,9 +207,7 @@ void enterNormalMode() {
 }
 
 void loop() {
-    if (WiFi.listening()) {
-        return; 
-    }
+    if (WiFi.listening()) return; 
 
     handleWebPortal();
     
@@ -227,7 +225,6 @@ void loop() {
                 if (client->isConnected()) {
                     client->subscribe(String(mySettings.topic_prefix) + "fan/set");
                     client->subscribe(String(mySettings.topic_prefix) + "lights/set");
-                    publishAll();
                     RGB.color(0, 255, 255); 
                 }
             } else {
@@ -238,38 +235,53 @@ void loop() {
 
     checkButton(BTN_POWER, 3); checkButton(BTN_UP, 0); checkButton(BTN_DOWN, 1); checkButton(BTN_EXTRA, 2);
 
-    static unsigned long lastHb = 0;
-    if (millis() - lastHb > 5000) {
-        lastHb = millis();
+    // --- SENSOR WATCHDOG ---
+    // Only send wake commands if we haven't heard from the sensor for 10 seconds.
+    // This prevents "reset spikes" while ensuring the sensor stays alive.
+    if (millis() - lastRxTime > 10000) {
+        // Reset the RX timer so we don't spam commands instantly
+        lastRxTime = millis(); 
+        
+        Serial.println("Sensor Watchdog: Waking sensor...");
         sendRawByte(CMD_HPMA_START, sizeof(CMD_HPMA_START)); delay(50);
         sendRawByte(CMD_PMS_WAKE, sizeof(CMD_PMS_WAKE)); delay(50);
         sendRawByte(CMD_PMS_ACTIVE, sizeof(CMD_PMS_ACTIVE));
-        publishAll();
     }
 
+    // --- REPORTING TIMER (5 Seconds) ---
+    // Calculates average, Updates Screen, Updates MQTT
+    static unsigned long lastReport = 0;
+    if (millis() - lastReport > 5000) {
+        lastReport = millis();
+
+        // 1. Calculate the Average
+        int pm25Smooth = smooth(pm25Hist);
+        int pm10Smooth = smooth(pm10Hist);
+
+        // 2. Update Global Strings (Source of Truth)
+        lastPM25 = String(pm25Smooth);
+        lastPM10 = String(pm10Smooth);
+
+        // 3. Update Screen
+        if (lightsOn) drawDynamicValues();
+
+        // 4. Update MQTT
+        publishAll(); 
+    }
+
+    // --- SENSOR READING LOGIC ---
+    // Runs as fast as possible to fill the buffer
     while(Serial1.available()) {
-            byte b = Serial1.read();
-            if(rxIndex < 128) rxBuffer[rxIndex++] = b;
-            lastRxTime = millis();
-        }
-        
-        if(rxIndex > 0 && millis() - lastRxTime > 50) {
-            
-            // --- START DEBUG BLOCK ---
-            Serial.print("RX Len: "); Serial.print(rxIndex); Serial.print(" Data: ");
-            for(int i=0; i < rxIndex; i++) {
-                // Print a leading zero if needed (e.g., "0F" instead of "F")
-                if(rxBuffer[i] < 0x10) Serial.print("0");
-                Serial.print(rxBuffer[i], HEX); 
-                Serial.print(" ");
-            }
-            Serial.println(); 
-            // --- END DEBUG BLOCK ---
-
-            processSensorData();
-            rxIndex = 0;
-        }
+        byte b = Serial1.read();
+        if(rxIndex < 128) rxBuffer[rxIndex++] = b;
+        lastRxTime = millis();
     }
+       
+    if(rxIndex > 0 && millis() - lastRxTime > 50) {
+        processSensorData();
+        rxIndex = 0; 
+    }
+}
 
 // Helper to generate the Select Dropdown
 void printColorSelect(TCPClient &c, String name, uint16_t selected) {
@@ -540,51 +552,26 @@ void processSensorData() {
         
         // 2. VERIFY CHECKSUM
         int calcChecksum = 0;
-        // Sum bytes 0 to 29
         for (int i = 0; i < 30; i++) {
             calcChecksum += rxBuffer[startIdx + i];
         }
         int sentChecksum = (rxBuffer[startIdx + 30] << 8) + rxBuffer[startIdx + 31];
 
-        if (calcChecksum == sentChecksum) {
-            // Checksum matches! Data is valid.
-            
-            // 3. READ STANDARD DATA
-            // Bytes 6-7: PM2.5 Standard
-            // Bytes 8-9: PM10 Standard
-            int pm25Val = (rxBuffer[startIdx + 6] << 8) + rxBuffer[startIdx + 7];
-            int pm10Val = (rxBuffer[startIdx + 8] << 8) + rxBuffer[startIdx + 9];
+        if (calcChecksum == sentChecksum) {            
+            // 3. READ ATMOSPHERIC DATA (Indices 12 & 14)
+            int pm25Val = (rxBuffer[startIdx + 12] << 8) + rxBuffer[startIdx + 13];
+            int pm10Val = (rxBuffer[startIdx + 14] << 8) + rxBuffer[startIdx + 15];
 
-            bool ignoreSample = false;
-
-            if (pm25Val == 0) {
-                zeroCount++;
-                if (zeroCount < 5) {
-                    ignoreSample = true; // Ignore the first 4 zeros
-                }
-            } else {
-                zeroCount = 0; // We saw a real number, reset counter
+            pm25Hist[histIndex] = pm25Val;
+            pm10Hist[histIndex] = pm10Val;
+            histIndex++;
+            if (histIndex >= WINDOW) {
+                histIndex = 0;
+                histFilled = true;
             }
 
-            // Only update history if we aren't ignoring this sample
-            if (!ignoreSample) {
-                pm25Hist[histIndex] = pm25Val;
-                pm10Hist[histIndex] = pm10Val;
-                histIndex++;
-                if (histIndex >= WINDOW) {
-                    histIndex = 0;
-                    histFilled = true;
-                }
-            }
-
-            int pm25Smooth = smooth(pm25Hist);
-            int pm10Smooth = smooth(pm10Hist);
-
-            lastPM25 = String(pm25Smooth);
-            lastPM10 = String(pm10Smooth);
-
-            if (lightsOn) drawDynamicValues();
-            publishAll();
+            // Reset index so we don't re-read the same packet
+            rxIndex = 0; 
         }
     }
 }
@@ -600,4 +587,3 @@ void publishAll() {
     }
 
 }
-
