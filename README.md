@@ -18,7 +18,7 @@ This guide will walk you through flashing a new firmware onto the Aeris Aair 3-i
 
 ## Disclaimer
 
-It is not currently possible to re-flash the original vendor-provided firmware. This is a one-way process. It may be possible in the future to re-flash but I'm not aware how to do it. Please go into this with the understanding that there is no way back. The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant.
+It is not currently possible to re-flash the original vendor-provided firmware. This is a one-way process. It may be possible in the future to re-flash but I'm not aware how to do it. Please go into this with the understanding that there is no way back. The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant. I have included an example automation you can add to Home Assistant to do just this.
 
 <br>
 <br>
