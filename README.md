@@ -309,23 +309,23 @@ Here's a basic yaml confiugration that only executes if you haven't switched the
 It keeps a minimum fan speed of 10% up to a PM2.5 reading of 40. Above that it will take the reading *0.25 for the fan speed.
 
 ```
-alias: Living Room Air Purifier Smart Control
+alias: Air Purifier Smart Control
 description: 
 triggers:
   - trigger: state
-    entity_id: sensor.living_room_purifier_pm25
+    entity_id: sensor.aeris_purifier_pm25
 conditions:
     # Will not automatically turn on if in an off state
   - condition: state
-    entity_id: fan.living_room_purifier
+    entity_id: fan.aeris_purifier
     state: "on"
 actions:
   - action: fan.set_percentage
     target:
-      entity_id: fan.living_room_purifier
+      entity_id: fan.aeris_purifier
     data:
       percentage: >
-        {% set pm = states('sensor.living_room_purifier_pm25') | int(0) %}
+        {% set pm = states('sensor.aeris_purifier_pm25') | int(0) %}
         {# If the PM2.5 reading is 40 or under run at 10% (this is the minimum percentage the purifier will run at) #}
         {% if pm <= 40 %}
           10 
