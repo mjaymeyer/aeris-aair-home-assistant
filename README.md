@@ -175,7 +175,7 @@ manufacturer.
 ```particle flash --local C:\DFU\bootloader.bin```
 >
 <img src="./media/image16.png" alt="" width="600"/>
->
+
 <img src="./media/image17.png" alt="" width="600"/>
 
 #### Updating the Particle software
