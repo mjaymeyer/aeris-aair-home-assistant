@@ -305,7 +305,7 @@ mqtt:
 
 #### Automation Yaml:
 
-Here's a basic yaml confiugration that only executes if you haven't switched the purifier off. 
+Here's a basic yaml configuration that only executes if you haven't switched the purifier off. 
 It keeps a minimum fan speed of 10% up to a PM2.5 reading of 40. Above that it will take the reading *0.25 for the fan speed.
 
 ```
