@@ -310,27 +310,27 @@ It keeps a minimum fan speed of 10% up to a PM2.5 reading of 40. Above that it w
 
 ```
 alias: Air Purifier Smart Control
-description: 
+description: PM2.5-based control
 triggers:
   - trigger: state
     entity_id: sensor.aeris_purifier_pm25
-conditions:
-    # Will not automatically turn on if in an off state
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state.state | int(0) > 40 or trigger.from_state.state | int(0) > 40 }}
+actions:
   - condition: state
     entity_id: fan.aeris_purifier
     state: "on"
-actions:
   - action: fan.set_percentage
     target:
       entity_id: fan.aeris_purifier
     data:
       percentage: >
         {% set pm = states('sensor.aeris_purifier_pm25') | int(0) %}
-        {# If the PM2.5 reading is 40 or under run at 10% (this is the minimum percentage the purifier will run at) #}
         {% if pm <= 40 %}
-          10 
+          10
         {% else %}
-          {# Otherwise set the fan speed to the PM2.5 reading * 0.25 up until a maximum of 100% #}
           {{ ([pm * 0.25, 100] | min) | int }}
         {% endif %}
 mode: restart
