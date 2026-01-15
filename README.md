@@ -333,6 +333,7 @@ mode: restart
 ## Restoring Original Firmware
 
 Thanks to @martinszelcel for noting how they were able to accomplish this!
+
 If you would like to restore the original firmware that we backed up earlier you can run the below:
 
 ```dfu-util -d 2b04:d006 -a 0 -s 0x08020000:leave -D original_firmware.bin```
