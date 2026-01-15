@@ -18,7 +18,7 @@ This guide will walk you through flashing a new firmware onto the Aeris Aair 3-i
 
 ## Disclaimer
 
-It is not currently possible to re-flash the original vendor-provided firmware. This is a one-way process. It may be possible in the future to re-flash but I'm not aware how to do it. Please go into this with the understanding that there is no way back. The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant. I have included an example automation you can add to Home Assistant to do just this.
+The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant. I have included an example automation you can add to Home Assistant to do just this.
 
 <br>
 <br>
@@ -125,12 +125,6 @@ versions and follow along.
 ### Taking a Backup
 
 First we'll make a backup of the original software.
-
-NOTE: Although we're making a backup I was unable to re-flash it to my
-device. I'm only backing up the original software in case someone
-smarter than myself can figure out how to re-flash it should someone
-choose to. Please proceed only if you're okay with potentially never
-going back to the original manufacturer software.
 
 1.  Open an admin-level command prompt and navigate to the folder you
     extracted dfu-utils to.
@@ -335,6 +329,14 @@ actions:
         {% endif %}
 mode: restart
 ```
+
+## Restoring Original Firmware
+
+Thanks to @martinszelcel for noting how they were able to accomplish this!
+If you would like to restore the original firmware that we backed up earlier you can run the below:
+
+```dfu-util -d 2b04:d006 -a 0 -s 0x08020000:leave -D original_firmware.bin```
+
 
 ## Alternative - Creating From Source Code
 
