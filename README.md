@@ -256,6 +256,10 @@ purifier, though you can run through the below first if you'd like.
 It is highly recommended to set the device up from a laptop as it is
 much easier than fighting with a phone.
 
+Alternatively, while the unit is still on USB, [tools/usb-setup](tools/usb-setup/README.md)
+writes the Wi-Fi and MQTT settings directly, skipping both stages below.
+It can also update the firmware later without losing the settings.
+
 ### Stage One (WiFi Network Connecting)
 
 1.  An unencrypted WiFi network named Aeris-xxxx should be broadcasting.
