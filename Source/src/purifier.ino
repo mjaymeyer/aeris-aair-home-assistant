@@ -80,7 +80,7 @@ const char* LED_FX[] = {"solid", "blink", "breathe", "pulse", "candle", "chase",
 const int LED_FX_N = 10, LED_ADDR = 1024;
 struct LedPrefs { uint8_t magic, on[2], bright[2], fx[2], follow[2], mask, speed[2], sum; };
 LedPrefs lp; volatile uint8_t ledDuty[8]; uint8_t ledGamma[256], ledLum[256], ledHi[2];
-unsigned long ledDirty = 0; bool ledPublish = false;
+unsigned long ledDirty = 0; bool ledSave = false, ledPublish = false;
 const int BTN_UP        = D1;
 const int BTN_DOWN      = D2; 
 const int BTN_EXTRA     = D3;
@@ -257,7 +257,7 @@ void loop() {
     }
 
     checkButton(BTN_POWER, 3); checkButton(BTN_UP, 0); checkButton(BTN_DOWN, 1); checkButton(BTN_EXTRA, 2);
-    if (ledDirty && millis() - ledDirty > 3000) { ledDirty = 0; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); }
+    if (ledSave && millis() - ledDirty > 3000) { ledSave = false; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); }
 
     // --- SENSOR WATCHDOG ---
     // Only send wake commands if we haven't heard from the sensor for 10 seconds.
@@ -539,7 +539,7 @@ void initRing() {
     if (lp.magic != 0xA8 || lp.sum != ledSum() || lp.fx[0] > 4 || lp.fx[1] >= LED_FX_N || lp.speed[0] < 10 || lp.speed[1] < 10)
         lp = LedPrefs{0xA8, {0, 0}, {255, 255}, {0, 0}, {1, 1}, 15, {100, 100}, 0};
     for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn;   // match the display, also in setup mode
-    ledsChanged(); ledDirty = 0;
+    ledsChanged(); ledSave = false;
 }
 
 void writeRing(uint8_t v) {
@@ -615,7 +615,7 @@ void ledSet(int c, String k, String v) {
 // After changes: recompute the brightness range, save in 3 s (EEPROM wear), publish the retained state.
 void ledsChanged() {
     for (int c = 0; c < 2; c++) ledHi[c] = 255 * powf(ledGamma[lp.bright[c]] / 128.0f, 1 / 2.2f) + 0.5f;
-    ledDirty = millis() | 1; ledPublish = true;
+    ledDirty = millis(); ledSave = true; ledPublish = true;
 }
 
 void publishLeds() {
