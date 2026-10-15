@@ -483,7 +483,7 @@ void initRing() {
     pinMode(PIN_RING_HS, OUTPUT); digitalWrite(PIN_RING_HS, HIGH); delay(5); digitalWrite(PIN_RING_HS, LOW); delay(5);
     digitalWrite(PIN_RING_HS, HIGH); pinMode(PIN_RING_HS, INPUT); delay(50);
     pinMode(PIN_RING_DATA, OUTPUT); pinMode(PIN_RING_CLK, OUTPUT); pinMode(PIN_RING_LATCH, OUTPUT);
-    digitalWrite(PIN_RING_LATCH, HIGH); setRing(false);
+    digitalWrite(PIN_RING_LATCH, HIGH); setRing(lightsOn);   // match the display, also in setup mode
 }
 
 void setRing(bool on) {
