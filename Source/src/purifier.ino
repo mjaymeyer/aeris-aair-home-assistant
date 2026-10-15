@@ -64,8 +64,9 @@ const int PIN_SENSOR_TX = A6;
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 const int PIN_DISP_BL   = A1; 
-// Button LEDs (their glow is the ring) sit behind a 74HC595 shift register: D5 data, D6 clock,
-// D7 latch, LSB first, plus a boot handshake pulse on A4. Unlatched, it shows random power-up contents.
+// Ring and button lights sit behind a 74HC595 shift register: D5 data, D6 clock, D7 latch, LSB first,
+// plus a boot handshake pulse on A4. Unlatched, it shows random power-up contents. Bits: 0 ring boost,
+// 1 all buttons dim, 2 power, 3 A, 4 minus, 5 plus, 6 ring, 7 unused.
 const int PIN_RING_DATA = D5;
 const int PIN_RING_CLK  = D6;
 const int PIN_RING_LATCH = D7;

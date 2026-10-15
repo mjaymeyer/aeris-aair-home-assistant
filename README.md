@@ -328,7 +328,7 @@ mqtt:
         {% endif %}
 ```
 
-The display and the button lights (their glow forms the ring) switch on and off together:
+The display, the ring and the button lights switch on and off together:
 press the display button, or publish `1` / `0` to `aeris/purifier/lights/set`.
 
 #### Automation Yaml:
