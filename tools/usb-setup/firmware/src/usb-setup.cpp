@@ -48,7 +48,7 @@ bool valid(const Settings& s) {
     return s.build_signature[0] && memchr(s.build_signature, 0, sizeof(s.build_signature)) &&
         s.wifi_ssid[0] && memchr(s.wifi_ssid, 0, sizeof(s.wifi_ssid)) &&
         memchr(s.wifi_pass, 0, sizeof(s.wifi_pass)) &&
-        s.mqtt_ip[0] && memchr(s.mqtt_ip, 0, sizeof(s.mqtt_ip)) &&
+        memchr(s.mqtt_ip, 0, sizeof(s.mqtt_ip)) &&   // empty = Wi-Fi only, as the firmware allows
         s.mqtt_port > 0 && s.mqtt_port <= 65535 &&
         memchr(s.mqtt_user, 0, sizeof(s.mqtt_user)) &&
         memchr(s.mqtt_pass, 0, sizeof(s.mqtt_pass)) &&
@@ -140,7 +140,7 @@ void loop() {
             EEPROM.get(0, s);
             Serial.printf("NET target_connected=%d\n", String(WiFi.SSID()) == String(s.wifi_ssid));
             TCPClient tcp;
-            Serial.printf("NET broker TCP=%d\n", tcp.connect(s.mqtt_ip, s.mqtt_port));
+            if (s.mqtt_ip[0]) Serial.printf("NET broker TCP=%d\n", tcp.connect(s.mqtt_ip, s.mqtt_port));
             tcp.stop();
             tcpTested = true;
         }
