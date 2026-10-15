@@ -64,7 +64,12 @@ const int PIN_SENSOR_TX = A6;
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 const int PIN_DISP_BL   = A1; 
-const int PIN_RING_EN   = D6; 
+// Button LEDs (their glow is the ring) sit behind a 74HC595 shift register: D5 data, D6 clock,
+// D7 latch, LSB first, plus a boot handshake pulse on A4. Unlatched, it shows random power-up contents.
+const int PIN_RING_DATA = D5;
+const int PIN_RING_CLK  = D6;
+const int PIN_RING_LATCH = D7;
+const int PIN_RING_HS   = A4;
 const int BTN_UP        = D1;
 const int BTN_DOWN      = D2; 
 const int BTN_EXTRA     = D3;
@@ -108,6 +113,7 @@ void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* bo
 void handleWebPortal(); 
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
+void initRing(); void setRing(bool on);
 void sendRawByte(const byte* data, int len); void processSensorData(); void publishAll();
 void enterSetupMode(); void enterNormalMode(); void loadDefaults();
 void printColorSelect(TCPClient &c, String name, uint16_t selected);
@@ -120,7 +126,7 @@ void setup() {
     
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
-    pinMode(PIN_DISP_BL, OUTPUT); pinMode(PIN_RING_EN, OUTPUT);
+    pinMode(PIN_DISP_BL, OUTPUT); initRing();
     pinMode(BTN_UP, INPUT_PULLDOWN); pinMode(BTN_DOWN, INPUT_PULLDOWN);
     pinMode(BTN_EXTRA, INPUT_PULLDOWN); pinMode(BTN_POWER, INPUT_PULLDOWN);
     
@@ -471,10 +477,22 @@ void drawDynamicValues() {
     }
 }
 
+// Must run before tft.begin(): A4 becomes SPI MISO afterwards.
+void initRing() {
+    pinMode(PIN_RING_HS, OUTPUT); digitalWrite(PIN_RING_HS, HIGH); delay(5); digitalWrite(PIN_RING_HS, LOW); delay(5);
+    digitalWrite(PIN_RING_HS, HIGH); pinMode(PIN_RING_HS, INPUT); delay(50);
+    pinMode(PIN_RING_DATA, OUTPUT); pinMode(PIN_RING_CLK, OUTPUT); pinMode(PIN_RING_LATCH, OUTPUT);
+    digitalWrite(PIN_RING_LATCH, HIGH); setRing(false);
+}
+
+void setRing(bool on) {
+    digitalWrite(PIN_RING_LATCH, LOW); shiftOut(PIN_RING_DATA, PIN_RING_CLK, LSBFIRST, on ? 0xFF : 0x00); digitalWrite(PIN_RING_LATCH, HIGH);
+}
+
 void updateSystem() {
     analogWrite(PIN_FAN, map(currentSpeed, 0, 100, 0, 255));
     int s = lightsOn ? HIGH : LOW;
-    digitalWrite(PIN_DISP_BL, s); digitalWrite(PIN_RING_EN, !s); 
+    digitalWrite(PIN_DISP_BL, s); setRing(lightsOn);
     if(lightsOn) { if (drawnSpeed == -999) { tft.fillScreen(ILI9341_BLACK); drawnSpeed=-1; drawnPM25="-1"; } drawDynamicValues(); }
     else { drawnSpeed = -999; }
     publishAll();
