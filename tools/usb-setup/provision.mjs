@@ -144,7 +144,8 @@ try {
   if (mode === 'setup') {
     settings = fresh();
   } else {
-    assert.equal(get(old, F.sig), signature(opt.from), 'the unit\'s settings do not belong to --from');
+    // A retry after a lost acknowledgement finds the settings already signed for --app: write them again.
+    assert([signature(opt.from), signature(opt.app)].includes(get(old, F.sig)), 'the unit\'s settings belong to neither --from nor --app');
     settings = Buffer.from(old);
     put(settings, F.sig, signature(opt.app), 'signature');
   }
