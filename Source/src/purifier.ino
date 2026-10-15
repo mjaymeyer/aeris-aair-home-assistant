@@ -78,6 +78,7 @@ SYSTEM_THREAD(ENABLED);
 
 TCPServer webServer(80);
 MQTT *client = NULL;
+String mqttClientId;
 
 int currentSpeed = 0;      
 int savedSpeed   = 25;     
@@ -117,6 +118,7 @@ STARTUP(softap_set_application_page_handler(http_handler, nullptr));
 
 void setup() {
     Serial.begin(9600);
+    mqttClientId = "Aeris-" + System.deviceID();
     
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
@@ -221,7 +223,7 @@ void loop() {
         }
         if (client != NULL) {
             if (!client->isConnected()) {
-                client->connect("Aeris", mySettings.mqtt_user, mySettings.mqtt_pass);
+                client->connect(mqttClientId.c_str(), mySettings.mqtt_user, mySettings.mqtt_pass);
                 if (client->isConnected()) {
                     client->subscribe(String(mySettings.topic_prefix) + "fan/set");
                     client->subscribe(String(mySettings.topic_prefix) + "lights/set");
