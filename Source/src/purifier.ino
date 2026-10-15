@@ -2,6 +2,7 @@
 #include "Adafruit_ILI9341.h"
 #include "Adafruit_mfGFX.h"
 #include "softap_http.h"
+#include "SparkIntervalTimer.h"
 
 // -------------------------------------------------------------------------
 // 1. CONFIGURATION
@@ -71,6 +72,15 @@ const int PIN_RING_DATA = D5;
 const int PIN_RING_CLK  = D6;
 const int PIN_RING_LATCH = D7;
 const int PIN_RING_HS   = A4;
+// LED channels 0 ring, 1 buttons, set over MQTT JSON or the web page: on, brightness 0-255, effect, follow the
+// display, which buttons (mask 1 power, 2 A, 4 minus, 8 plus) and effect speed 10-250% (100% = 0.7x the base timings).
+// Saved at EEPROM 1024, outside Settings.
+// Effects 0-4 suit both channels; 5-9 need several lights (buttons only).
+const char* LED_FX[] = {"solid", "blink", "breathe", "pulse", "candle", "chase", "bounce", "fill", "wave", "twinkle"};
+const int LED_FX_N = 10, LED_ADDR = 1024;
+struct LedPrefs { uint8_t magic, on[2], bright[2], fx[2], follow[2], mask, speed[2], sum; };
+LedPrefs lp; volatile uint8_t ledDuty[8]; uint8_t ledGamma[256], ledLum[256], ledHi[2];
+unsigned long ledDirty = 0; bool ledPublish = false;
 const int BTN_UP        = D1;
 const int BTN_DOWN      = D2; 
 const int BTN_EXTRA     = D3;
@@ -114,7 +124,9 @@ void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* bo
 void handleWebPortal(); 
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
-void initRing(); void setRing(bool on);
+void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
+void ledsChanged(); void publishLeds(); uint8_t ledSum();
+Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
 void sendRawByte(const byte* data, int len); void processSensorData(); void publishAll();
 void enterSetupMode(); void enterNormalMode(); void loadDefaults();
 void printColorSelect(TCPClient &c, String name, uint16_t selected);
@@ -127,7 +139,7 @@ void setup() {
     
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
-    pinMode(PIN_DISP_BL, OUTPUT); initRing();
+    pinMode(PIN_DISP_BL, OUTPUT); initRing(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
     pinMode(BTN_UP, INPUT_PULLDOWN); pinMode(BTN_DOWN, INPUT_PULLDOWN);
     pinMode(BTN_EXTRA, INPUT_PULLDOWN); pinMode(BTN_POWER, INPUT_PULLDOWN);
     
@@ -232,15 +244,20 @@ void loop() {
                 if (client->isConnected()) {
                     client->subscribe(String(mySettings.topic_prefix) + "fan/set");
                     client->subscribe(String(mySettings.topic_prefix) + "lights/set");
+                    client->subscribe(String(mySettings.topic_prefix) + "ring/set");
+                    client->subscribe(String(mySettings.topic_prefix) + "buttons/set");
+                    ledPublish = true;
                     RGB.color(0, 255, 255); 
                 }
             } else {
                 client->loop();
+                if (ledPublish) { ledPublish = false; publishLeds(); }
             }
         }
     }
 
     checkButton(BTN_POWER, 3); checkButton(BTN_UP, 0); checkButton(BTN_DOWN, 1); checkButton(BTN_EXTRA, 2);
+    if (ledDirty && millis() - ledDirty > 3000) { ledDirty = 0; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); }
 
     // --- SENSOR WATCHDOG ---
     // Only send wake commands if we haven't heard from the sensor for 10 seconds.
@@ -314,6 +331,25 @@ void handleWebPortal() {
         
         client.println("HTTP/1.1 200 OK"); client.println("Content-Type: text/html"); client.println("Connection: close"); client.println();
         
+        if (req.indexOf("GET /leds?") != -1) {
+            auto arg = [&](String k) -> String {
+                int s = req.indexOf("?" + k + "="); if (s == -1) s = req.indexOf("&" + k + "="); if (s == -1) return "";
+                s += k.length() + 2; int e = req.indexOf("&", s), sp = req.indexOf(" ", s); if (e == -1 || e > sp) e = sp;
+                return req.substring(s, e);
+            };
+            const char* bn[] = {"power", "a", "minus", "plus"};
+            for (int c = 0; c < 2; c++) {
+                String p = c ? "b" : "r";
+                ledSet(c, "state", arg(p + "o")); ledSet(c, "follow", arg(p + "w"));
+                if (arg(p + "b").length()) ledSet(c, "brightness", arg(p + "b"));
+                if (arg(p + "f").length()) ledSet(c, "effect", arg(p + "f"));
+                if (arg(p + "s").length()) ledSet(c, "speed", arg(p + "s"));
+            }
+            for (int i = 0; i < 4; i++) ledSet(1, bn[i], arg(String("k") + String(i)));
+            ledsChanged();
+            client.print("<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Lights applied.</body></html>");
+            client.stop(); return;
+        }
         if (req.indexOf("GET /save") != -1) {
             auto getVal = [&](String key) -> String {
                 int s = req.indexOf(key + "="); if (s == -1) return ""; s += key.length() + 1;
@@ -400,6 +436,19 @@ void handleWebPortal() {
             
             client.print("<br><input type='submit' value='SAVE' style='padding:10px;width:100%;background:blue;color:white;'></form>");
             
+            client.print("<hr><h3>Lights</h3><form action='/leds' method='GET'>");
+            for (int c = 0; c < 2; c++) {
+                String p = c ? "b" : "r";
+                client.print(String(c ? "<b>Buttons:</b> " : "<b>Ring:</b> ") + "<label><input type='checkbox' name='" + p + "o' value='1'" + (lp.on[c] ? " checked" : "") + "> on</label> ");
+                client.print(String("<label><input type='checkbox' name='") + p + "w' value='1'" + (lp.follow[c] ? " checked" : "") + "> follows display</label><br>");
+                client.print(String("Brightness <input type='range' name='") + p + "b' min='1' max='255' value='" + String(lp.bright[c]) + "'> Effect <select name='" + p + "f'>");
+                for (int i = 0; i < (c ? LED_FX_N : 5); i++) client.print(String("<option") + (lp.fx[c] == i ? " selected" : "") + ">" + LED_FX[i] + "</option>");
+                client.print(String("</select> Speed <input type='number' name='") + p + "s' min='10' max='250' step='10' value='" + String(lp.speed[c]) + "' style='width:4em'>%<br>");
+            }
+            const char* bl[] = {"power", "A", "minus", "plus"};
+            for (int i = 0; i < 4; i++) client.print(String("<label><input type='checkbox' name='k") + String(i) + "' value='1'" + ((lp.mask >> i) & 1 ? " checked" : "") + "> " + bl[i] + "</label> ");
+            client.print("<br><input type='submit' value='APPLY LIGHTS' style='padding:10px;width:100%;background:green;color:white;'></form>");
+
             // --- NEW: DFU BUTTON ---
             client.print("<hr><form action='/save' method='GET'><input type='hidden' name='dfu' value='1'>");
             client.print("<input type='submit' value='ENTER DFU MODE' style='background:orange;color:white;padding:10px;width:100%;'></form>");
@@ -483,17 +532,109 @@ void initRing() {
     pinMode(PIN_RING_HS, OUTPUT); digitalWrite(PIN_RING_HS, HIGH); delay(5); digitalWrite(PIN_RING_HS, LOW); delay(5);
     digitalWrite(PIN_RING_HS, HIGH); pinMode(PIN_RING_HS, INPUT); delay(50);
     pinMode(PIN_RING_DATA, OUTPUT); pinMode(PIN_RING_CLK, OUTPUT); pinMode(PIN_RING_LATCH, OUTPUT);
-    digitalWrite(PIN_RING_LATCH, HIGH); setRing(lightsOn);   // match the display, also in setup mode
+    digitalWrite(PIN_RING_LATCH, HIGH); writeRing(0);
+    // brightness 1-255 -> PWM 7-128 of 128 (gamma 2.2; 7 is the dimmest useful level, chosen by eye); lightness -> PWM
+    for (int i = 0; i < 256; i++) { ledGamma[i] = i ? 7 + (int)(powf((i - 1) / 254.0f, 2.2f) * 121 + 0.5f) : 0; ledLum[i] = powf(i / 255.0f, 2.2f) * 128 + 0.5f; }
+    EEPROM.get(LED_ADDR, lp);
+    if (lp.magic != 0xA8 || lp.sum != ledSum() || lp.fx[0] > 4 || lp.fx[1] >= LED_FX_N || lp.speed[0] < 10 || lp.speed[1] < 10)
+        lp = LedPrefs{0xA8, {0, 0}, {255, 255}, {0, 0}, {1, 1}, 15, {100, 100}, 0};
+    for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn;   // match the display, also in setup mode
+    ledsChanged(); ledDirty = 0;
 }
 
-void setRing(bool on) {
-    digitalWrite(PIN_RING_LATCH, LOW); shiftOut(PIN_RING_DATA, PIN_RING_CLK, LSBFIRST, on ? 0xFF : 0x00); digitalWrite(PIN_RING_LATCH, HIGH);
+void writeRing(uint8_t v) {
+    digitalWrite(PIN_RING_LATCH, LOW); shiftOut(PIN_RING_DATA, PIN_RING_CLK, LSBFIRST, v); digitalWrite(PIN_RING_LATCH, HIGH);
+}
+
+uint8_t ledSum() { uint8_t s = 0x5A; for (unsigned i = 0; i < sizeof(lp) - 1; i++) s += ((uint8_t*)&lp)[i]; return s; }
+
+// Effect lightness 0..1 -> PWM: brief zero, then from just-visible (lightness 46 = 3/128) up to the channel level.
+uint8_t ledAt(float l, int c) {
+    if (l <= 0) return 0; if (l >= 1) return ledGamma[lp.bright[c]];
+    uint8_t hi = ledHi[c], lo = hi < 46 ? hi : 46; return ledLum[(uint8_t)(lo + (hi - lo) * l)];
+}
+
+// Lightness 0..1 of light e of n at time t (ms). Multi-light effects (5+) on a single light are solid.
+float ledFx(uint8_t fx, int e, int n, uint32_t t, float cand, float tw, uint8_t sp) {
+    if (fx >= 5 && n < 2) return 1;
+    float x;
+    switch (fx) {
+        case 1: return (t / 500) % 2 ? 0 : 1;
+        case 2: case 8: if (fx == 8) t += e * 750; x = (t % 3000) / 1500.0f; if (x > 1) x = 2 - x; return x < 0.05f ? 0 : (x - 0.05f) / 0.95f;
+        case 3: {   // two soft swells, then a pause capped at ~3 s of real time (21 virtual ms per speed %)
+            uint32_t q = 21u * sp; if (q > 1600) q = 1600; t %= 800 + q;
+            return t < 300 ? sinf(t * 3.1416f / 300) : t >= 500 && t < 800 ? 0.7f * sinf((t - 500) * 3.1416f / 300) : 0;
+        }
+        case 4: return cand;
+        case 5: return (int)((t / 250) % n) == e ? 1 : 0;
+        case 6: { int k = (t / 200) % (2 * n - 2); return (k < n ? k : 2 * n - 2 - k) == e ? 1 : 0; }
+        case 7: return (int)((t / 300) % (n + 1)) > e ? 1 : 0;
+        case 9: return tw;
+    }
+    return 1;
+}
+
+// 1 ms tick: effect lightness per light -> PWM duty for the interrupt (ring = register bits 6 + boost 0, buttons = 2-5).
+void ledsTick() {
+    static float cand[5] = {1, 1, 1, 1, 1}, ct[5] = {1, 1, 1, 1, 1}; static int16_t tw[4]; static uint32_t vt[2]; static uint16_t acc[2];
+    uint8_t d[8] = {0};
+    for (int c = 0; c < 2; c++) {   // effect time per channel runs at speed% x 0.7 of real time
+        acc[c] += lp.speed[c] * 7;
+        while (acc[c] >= 1000) {
+            acc[c] -= 1000; vt[c]++;
+            for (int e = c ? 0 : 4; e < (c ? 4 : 5); e++) { if (random(60) == 0) ct[e] = random(55, 101) / 100.0f; cand[e] += (ct[e] - cand[e]) * 0.05f; }
+            if (c) for (int e = 0; e < 4; e++) { if (tw[e]) { if (++tw[e] > 1200) tw[e] = 0; } else if (random(1500) == 0) tw[e] = 1; }
+        }
+    }
+    if (lp.on[0]) d[6] = d[0] = ledAt(ledFx(lp.fx[0], 0, 1, vt[0], cand[4], 0, lp.speed[0]), 0);
+    if (lp.on[1]) for (int e = 0; e < 4; e++) if (lp.mask & (1 << e))
+        d[2 + e] = ledAt(ledFx(lp.fx[1], e, 4, vt[1], cand[e], tw[e] < 600 ? tw[e] / 600.0f : (1200 - tw[e]) / 600.0f, lp.speed[1]), 1);
+    for (int i = 0; i < 8; i++) ledDuty[i] = d[i];
+}
+
+// 20 kHz hardware timer (TIM6, no pins): 128-slot PWM per register bit at 156 Hz, register rewritten only on change.
+void ledsPwm() {
+    static uint8_t slot = 0, last = 0xFF; uint8_t out = 0;
+    for (int i = 0; i < 8; i++) if (slot < ledDuty[i]) out |= 1 << i;
+    slot = (slot + 1) & 127;
+    if (out != last) { last = out; writeRing(out); }
+}
+
+bool ledTrue(String v) { v.toLowerCase(); return v == "on" || v == "true" || v == "1"; }
+
+void ledSet(int c, String k, String v) {
+    const char* bn[] = {"power", "a", "minus", "plus"};
+    if (k == "state") lp.on[c] = ledTrue(v);
+    else if (k == "brightness") lp.bright[c] = constrain(v.toInt(), 0, 255);
+    else if (k == "effect") { for (int i = 0; i < (c ? LED_FX_N : 5); i++) if (v == LED_FX[i]) lp.fx[c] = i; }
+    else if (k == "follow") lp.follow[c] = ledTrue(v);
+    else if (k == "speed") lp.speed[c] = constrain(v.toInt(), 10, 250);
+    else if (c) { for (int i = 0; i < 4; i++) if (k == bn[i]) lp.mask = ledTrue(v) ? lp.mask | (1 << i) : lp.mask & ~(1 << i); }
+}
+
+// After changes: recompute the brightness range, save in 3 s (EEPROM wear), publish the retained state.
+void ledsChanged() {
+    for (int c = 0; c < 2; c++) ledHi[c] = 255 * powf(ledGamma[lp.bright[c]] / 128.0f, 1 / 2.2f) + 0.5f;
+    ledDirty = millis() | 1; ledPublish = true;
+}
+
+void publishLeds() {
+    const char* tf[] = {"false", "true"}; const char* bn[] = {"power", "a", "minus", "plus"};
+    String p = String(mySettings.topic_prefix);
+    for (int c = 0; c < 2; c++) {
+        String s = String("{\"state\":\"") + (lp.on[c] ? "ON" : "OFF") + "\",\"brightness\":" + String(lp.bright[c]) + ",\"effect\":\"" + LED_FX[lp.fx[c]]
+            + "\",\"color_mode\":\"brightness\",\"follow\":" + tf[lp.follow[c] ? 1 : 0] + ",\"speed\":" + String(lp.speed[c]);
+        if (c) for (int i = 0; i < 4; i++) s += String(",\"") + bn[i] + "\":" + tf[(lp.mask >> i) & 1];
+        client->publish((p + (c ? "buttons/state" : "ring/state")).c_str(), (s + "}").c_str(), true);
+    }
 }
 
 void updateSystem() {
     analogWrite(PIN_FAN, map(currentSpeed, 0, 100, 0, 255));
     int s = lightsOn ? HIGH : LOW;
-    digitalWrite(PIN_DISP_BL, s); setRing(lightsOn);
+    digitalWrite(PIN_DISP_BL, s);
+    static bool lastLights = false;
+    if (lightsOn != lastLights) { lastLights = lightsOn; for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn; ledPublish = true; }
     if(lightsOn) { if (drawnSpeed == -999) { tft.fillScreen(ILI9341_BLACK); drawnSpeed=-1; drawnPM25="-1"; } drawDynamicValues(); }
     else { drawnSpeed = -999; }
     publishAll();
@@ -503,6 +644,14 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     String message = "";
     for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
     String t = String(topic);
+    String pre = String(mySettings.topic_prefix);
+    if (t == pre + "ring/set" || t == pre + "buttons/set") {
+        int c = t == pre + "buttons/set"; JSONValue o = JSONValue::parseCopy(message.c_str(), message.length());
+        if (!o.isObject()) ledSet(c, "state", message);
+        else { JSONObjectIterator it(o); while (it.next()) { JSONValue v = it.value();
+            ledSet(c, String(it.name().data()), v.isBool() ? String(v.toBool() ? "true" : "false") : v.isNumber() ? String(v.toInt()) : String(v.toString().data())); } }
+        ledsChanged(); return;
+    }
     if (t.endsWith("/set")) {
         if (t.indexOf("lights") > -1) { lightsOn = (message.toInt() == 1); }
         else {

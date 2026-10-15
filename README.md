@@ -331,6 +331,73 @@ mqtt:
 The display, the ring and the button lights switch on and off together:
 press the display button, or publish `1` / `0` to `aeris/purifier/lights/set`.
 
+#### Ring and Button Lights
+
+The ring and the four button lights are two separate lights, each with its own on/off, brightness,
+effect and speed. Set them from Home Assistant, over MQTT, or in the Lights section of the unit's
+web page (applies at once, no reboot). The settings are saved on the unit.
+
+Publish JSON to `ring/set` or `buttons/set` under your prefix; the unit answers with retained JSON
+on `ring/state` and `buttons/state`. Any subset of these keys works:
+
+| Key | Values |
+|---|---|
+| `state` | `"ON"` / `"OFF"` |
+| `brightness` | `1` to `255` (`1` is the dimmest useful level) |
+| `effect` | `solid`, `blink`, `breathe`, `pulse`, `candle`; buttons also `chase`, `bounce`, `fill`, `wave`, `twinkle` |
+| `speed` | effect speed in percent, `10` to `250` (default `100`) |
+| `follow` | `true` (default): switches on and off with the display; `false`: only by its own `state` |
+| `power`, `a`, `minus`, `plus` | buttons only: `true` / `false` for each button light |
+
+For example, `{"state":"ON","brightness":40,"effect":"breathe"}` on `aeris/purifier/ring/set` makes
+a dim breathing night light. In Home Assistant, add to the `mqtt:` section above (a switch per button
+light works like the follow switch, with the keys from the table; the effect select gives a
+dashboard dropdown):
+
+```
+  light:
+    - name: "Aeris Ring"
+      schema: json
+      command_topic: "aeris/purifier/ring/set"
+      state_topic: "aeris/purifier/ring/state"
+      supported_color_modes: ["brightness"]
+      effect: true
+      effect_list: [solid, blink, breathe, pulse, candle]
+    - name: "Aeris Button Lights"
+      schema: json
+      command_topic: "aeris/purifier/buttons/set"
+      state_topic: "aeris/purifier/buttons/state"
+      supported_color_modes: ["brightness"]
+      effect: true
+      effect_list: [solid, blink, breathe, pulse, candle, chase, bounce, fill, wave, twinkle]
+  number:
+    - name: "Aeris Ring Effect Speed"
+      command_topic: "aeris/purifier/ring/set"
+      command_template: '{"speed": {{ value | int }}}'
+      state_topic: "aeris/purifier/ring/state"
+      value_template: "{{ value_json.speed }}"
+      min: 10
+      max: 250
+      step: 10
+      unit_of_measurement: "%"
+  select:
+    - name: "Aeris Ring Effect"
+      command_topic: "aeris/purifier/ring/set"
+      command_template: '{"effect": "{{ value }}"}'
+      state_topic: "aeris/purifier/ring/state"
+      value_template: "{{ value_json.effect }}"
+      options: [solid, blink, breathe, pulse, candle]
+  switch:
+    - name: "Aeris Ring Follows Display"
+      command_topic: "aeris/purifier/ring/set"
+      state_topic: "aeris/purifier/ring/state"
+      payload_on: '{"follow":true}'
+      payload_off: '{"follow":false}'
+      value_template: "{{ 'ON' if value_json.follow else 'OFF' }}"
+      state_on: "ON"
+      state_off: "OFF"
+```
+
 #### Automation Yaml:
 
 Here's a basic yaml configuration that only executes if you haven't switched the purifier off. 
