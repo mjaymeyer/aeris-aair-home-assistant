@@ -306,8 +306,9 @@ void printColorSelect(TCPClient &c, String name, uint16_t selected) {
 void handleWebPortal() {
     TCPClient client = webServer.available();
     if (client) {
-        char buf[1024]; int idx = 0;
-        while (client.connected() && client.available()) {
+        char buf[1024]; int idx = 0; unsigned long t0 = millis();
+        while (client.connected() && millis() - t0 < 1000) {   // the request can arrive after the connection
+            if (!client.available()) { delay(1); continue; }
             char c = client.read();
             if (idx < 1023) buf[idx++] = c;
             if (c == '\n') break; 
