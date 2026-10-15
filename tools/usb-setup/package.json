@@ -1,0 +1,12 @@
+{
+  "name": "aeris-usb-setup",
+  "private": true,
+  "description": "Write an Aeris purifier's Wi-Fi and MQTT settings over USB",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
+  }
+}
