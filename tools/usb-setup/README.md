@@ -12,7 +12,7 @@ you flash the real firmware. The helper stays offline and only touches the setti
 
 - The unit already runs Device OS 3.3.1 (see the bootloader and system steps in the main README).
 - dfu-util and the Particle CLI, as in the main README.
-- Node.js 18 or newer; run `npm install` in this folder once.
+- Node.js 20 or newer; run `npm install` in this folder once.
 - The helper binary, built like the main firmware (free Particle account):
   `particle compile photon firmware --target 3.3.1 --saveTo usb-setup.bin`
 
