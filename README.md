@@ -282,7 +282,9 @@ much easier than fighting with a phone.
     enter your MQTT broker IP (e.g., 192.168.0.100), the port if
     different, and your username and password. You can change the
     broadcast MQTT topic prefix if you like (such as if you have
-    multiple Aeris Purifiers and you need them unique).
+    multiple Aeris Purifiers and you need them unique). Each unit
+    connects with its own MQTT client ID (`Aeris-<device ID>`), so
+    several purifiers can share one broker.
 
 3.  Hit save and the unit will reboot once more and you should see
     any display changes if you made them.
