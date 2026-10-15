@@ -328,6 +328,10 @@ mqtt:
         {% endif %}
 ```
 
+PM2.5 and PM10 are the sensor's mass readings in µg/m³. Builds before this change published the
+sensor's particle-count channels instead, which read many times higher and jump with airflow, so
+readings (and automation thresholds tuned to them) drop after updating.
+
 #### Automation Yaml:
 
 Here's a basic yaml configuration that only executes if you haven't switched the purifier off. 
