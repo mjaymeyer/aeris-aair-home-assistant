@@ -443,7 +443,7 @@ void handleWebPortal() {
                 client.print(String("<label><input type='checkbox' name='") + p + "w' value='1'" + (lp.follow[c] ? " checked" : "") + "> follows display</label><br>");
                 client.print(String("Brightness <input type='range' name='") + p + "b' min='1' max='255' value='" + String(lp.bright[c]) + "'> Effect <select name='" + p + "f'>");
                 for (int i = 0; i < (c ? LED_FX_N : 5); i++) client.print(String("<option") + (lp.fx[c] == i ? " selected" : "") + ">" + LED_FX[i] + "</option>");
-                client.print(String("</select> Speed <input type='number' name='") + p + "s' min='10' max='250' step='10' value='" + String(lp.speed[c]) + "' style='width:4em'>%<br>");
+                client.print(String("</select> Speed <input type='number' name='") + p + "s' min='10' max='250' step='1' value='" + String(lp.speed[c]) + "' style='width:4em'>%<br>");
             }
             const char* bl[] = {"power", "A", "minus", "plus"};
             for (int i = 0; i < 4; i++) client.print(String("<label><input type='checkbox' name='k") + String(i) + "' value='1'" + ((lp.mask >> i) & 1 ? " checked" : "") + "> " + bl[i] + "</label> ");
