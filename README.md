@@ -334,6 +334,10 @@ mqtt:
         {% endif %}
 ```
 
+PM2.5 and PM10 are the sensor's mass readings in µg/m³. Builds before this change published the
+sensor's particle-count channels instead, which read many times higher and jump with airflow, so
+readings (and automation thresholds tuned to them) drop after updating.
+
 The display, the ring and the button lights switch on and off together:
 press the display button, or publish `1` / `0` to `aeris/purifier/lights/set`.
 
