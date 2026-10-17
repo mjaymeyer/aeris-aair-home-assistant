@@ -96,14 +96,15 @@ TCPServer webServer(80);
 MQTT *client = NULL;
 String mqttClientId;
 
-// Fan PWM for 0-100 %: equal airflow steps from the slowest steady speed (1 %) to full, measured by microphone
-// (PWM 17-26 all run at ~22 % of full speed; the fan stops below ~16 and needs 22 to start from standstill).
-const uint8_t FAN_PWM[101] = {
-    0, 26, 27, 27, 28, 28, 29, 29, 30, 30, 30, 31, 31, 31, 32, 32, 33, 33, 33, 34, 34,
-    36, 36, 38, 39, 40, 41, 42, 43, 44, 45, 45, 46, 47, 48, 49, 51, 52, 54, 55, 57, 58,
-    60, 61, 63, 65, 66, 68, 71, 74, 76, 77, 79, 81, 84, 86, 88, 90, 92, 95, 97, 100, 102,
-    105, 108, 110, 113, 116, 119, 122, 125, 128, 131, 134, 138, 141, 144, 148, 152, 155, 159, 163, 167, 171,
-    175, 179, 184, 188, 192, 197, 202, 206, 211, 216, 221, 226, 231, 236, 241, 247, 255};
+// Fan speed % = estimated share of maximum airflow (fan RPM), 22-100 %, 0 = off; PWM per % measured by microphone
+// (PWM 17-26 all run at the slowest steady speed, ~22 % of full; the fan stops below ~16 and needs 22 to start).
+const int FAN_MIN = 22;
+const uint8_t FAN_PWM[101] = {   // 1-21 are never used (speeds snap to FAN_MIN)
+    0, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
+    26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 32, 33, 33, 34, 35, 36, 39, 40,
+    41, 43, 43, 44, 45, 47, 48, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 70, 73, 76, 78,
+    81, 84, 86, 89, 92, 95, 98, 102, 105, 108, 112, 115, 119, 123, 127, 131, 135, 139, 143, 148, 153,
+    158, 162, 168, 173, 178, 183, 189, 195, 200, 206, 213, 219, 225, 232, 238, 245, 255};
 unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
 // Speed step in % (1-25, default 1) for the buttons, MQTT and the web page, and the fan state to resume after a
 // reboot (speed, 0 = off, and the last running speed): saved at EEPROM 1088, outside Settings, 3 s after a change.
@@ -689,7 +690,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     if (t.endsWith("/set")) {
         if (t.indexOf("lights") > -1) { lightsOn = (message.toInt() == 1); }
         else {
-            int s = message.toInt(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = fp.step;
+            int s = message.toInt(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = FAN_MIN;
             if(currentSpeed > 100) currentSpeed=100;
             if(currentSpeed > 0) { savedSpeed = currentSpeed; lightsOn = true; } else lightsOn = false;
         }
@@ -713,28 +714,32 @@ void checkButton(int pin, int idx) {
     }
 }
 
-int fanSnap(int pct) { int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, 0, 100); }
+int fanSnap(int pct) { if (pct <= 0) return 0; int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, FAN_MIN, 100); }
 
 uint8_t fanSum() { return fp.magic ^ fp.step ^ fp.speed ^ fp.saved ^ 0x5A; }
 
 void fanLoad() {
     EEPROM.get(FAN_ADDR, fp);
     if (fp.magic != 0xF6 || fp.sum != fanSum() || fp.step < 1 || fp.step > 25 || fp.speed > 100 || fp.saved > 100) { fp = FanPrefs{0xF6, 1, 25, 25, 0}; fp.sum = fanSum(); }
+    if (fp.speed && fp.speed < FAN_MIN) fp.speed = FAN_MIN; if (fp.saved && fp.saved < FAN_MIN) fp.saved = FAN_MIN;
 }
 
 void fanSetStep(int s) {
     fp.step = constrain(s, 1, 25); fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); fanStepPublish = true;
-    if (currentSpeed > 0) { int v = fanSnap(currentSpeed); currentSpeed = v < fp.step ? fp.step : v; savedSpeed = currentSpeed; }
+    if (currentSpeed > 0) { currentSpeed = fanSnap(currentSpeed); savedSpeed = currentSpeed; }
     updateSystem();
 }
 
 void handlePress(int pin) {
     if (pin == BTN_POWER) {
         if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
-        else { if(savedSpeed < 1) savedSpeed = 25; currentSpeed = savedSpeed; lightsOn = true; }
+        else { if(savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; }
     }
-    else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=fp.step;lightsOn=true;}else currentSpeed+=fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
-    else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=fp.step;if(currentSpeed<=0)currentSpeed=0;else savedSpeed=currentSpeed;} }   // at 0 the screen stays on, showing OFF
+    else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=FAN_MIN;lightsOn=true;}else currentSpeed=(currentSpeed/fp.step+1)*fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
+    else if (pin == BTN_DOWN) {   // next lower step; from the minimum a separate press (not a held repeat) turns the fan off, screen stays on
+        if (currentSpeed > FAN_MIN) { currentSpeed = (currentSpeed - 1) / fp.step * fp.step; if (currentSpeed < FAN_MIN) currentSpeed = FAN_MIN; savedSpeed = currentSpeed; }
+        else if (currentSpeed > 0 && !fanHeld) currentSpeed = 0;
+    }
     else if (pin == BTN_EXTRA) { lightsOn = !lightsOn; }
     updateSystem();
 }
