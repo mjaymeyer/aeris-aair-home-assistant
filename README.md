@@ -335,8 +335,8 @@ mqtt:
       optimistic: false
 ```
 
-The fan speed percentage is the estimated share of the fan's maximum airflow: 22 % is the slowest speed it
-holds steadily, 100 % is full speed, and any lower non-zero setting runs at 22 %. Speeds move in steps of
+The fan speed percentage is the estimated share of the fan's maximum airflow: 20 % is the slowest speed it
+holds steadily, 100 % is full speed, and any lower non-zero setting runs at 20 %. Speeds move in steps of
 1 % by default; set the step (1-25 %) in the Fan section of the web page or with `fan/step/set` (retained
 state on `fan/step/state`). `fan/set` and `fan/state` still carry the percentage as 0-255; the two templates
 make Home Assistant show the same percentage as the unit. `fan/power/set` takes `ON` / `OFF` and keeps the
@@ -346,7 +346,7 @@ Buttons:
 
 | Button | Action |
 |---|---|
-| + / - | one step per press, repeating while held; changes an auto mode to manual. From 22 % a separate press of - turns the fan off (the screen stays on) |
+| + / - | one step per press, repeating while held; changes an auto mode to manual. From 20 % a separate press of - turns the fan off (the screen stays on) |
 | A | next mode: manual, auto-low, auto-high (auto modes show under the % sign) |
 | Power, short press | screen (and ring and button lights) on / off |
 | Power, held 1 s | unit on / off (off also darkens the ring and button lights; their settings return when it turns on) |
@@ -432,7 +432,7 @@ dashboard dropdown):
 #### Auto Modes
 
 The unit sets its own fan speed from its PM2.5 reading in the two auto modes, so no Home Assistant automation
-is needed. Auto-low runs at 22 % up to 5 µg/m³ and adds 1.56 % per µg/m³ up to 100 % at 55 µg/m³ (the start of
+is needed. Auto-low runs at 20 % up to 5 µg/m³ and adds 1.6 % per µg/m³ up to 100 % at 55 µg/m³ (the start of
 the US EPA "unhealthy" range); auto-high gives 1.25 times that airflow. Switch modes with A, with the fan's preset in
 Home Assistant, or by publishing `manual`, `auto-low` or `auto-high` to `fan/mode/set` (retained state on
 `fan/mode/state`). Setting a speed with + / - or `fan/set` switches back to manual.

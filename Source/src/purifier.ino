@@ -99,11 +99,12 @@ TCPServer webServer(80);
 MQTT *client = NULL;
 String mqttClientId;
 
-// Fan speed % = estimated share of maximum airflow (fan RPM), 22-100 %, 0 = off; PWM per % measured by microphone
-// (PWM 17-26 all run at the slowest steady speed, ~22 % of full; the fan stops below ~16 and needs 22 to start).
-const int FAN_MIN = 22;
-const uint8_t FAN_PWM[101] = {   // 1-21 are never used (speeds snap to FAN_MIN)
-    0, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,
+// Fan speed % = estimated share of maximum airflow (fan RPM), 20-100 %, 0 = off; PWM per % measured by microphone.
+// Below its slowest steady speed (~20-22 % of full) a fan holds one speed: PWM 17-26 on one unit, up to 25 on
+// another, so 20 % = PWM 25. The fan stops below ~16 and needs 22 to start from standstill.
+const int FAN_MIN = 20;
+const uint8_t FAN_PWM[101] = {   // 1-19 are never used (speeds snap to FAN_MIN)
+    0, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
     26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 32, 33, 33, 34, 35, 36, 39, 40,
     41, 43, 43, 44, 45, 47, 48, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 70, 73, 76, 78,
     81, 84, 86, 89, 92, 95, 98, 102, 105, 108, 112, 115, 119, 123, 127, 131, 135, 139, 143, 148, 153,
@@ -111,7 +112,7 @@ const uint8_t FAN_PWM[101] = {   // 1-21 are never used (speeds snap to FAN_MIN)
 unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
 // Saved at EEPROM 1088, outside Settings: speed step in % (1-25, default 1) for the buttons, MQTT and the web page;
 // the fan state to resume after a reboot (speed, 0 = off, and the last running speed; written 3 s after a change);
-// the mode: 0 manual, 1 auto-low (22 % at PM2.5 <= 5 ug/m3 up to 100 % at 55), 2 auto-high (1.25 x auto-low).
+// the mode: 0 manual, 1 auto-low (20 % at PM2.5 <= 5 ug/m3 up to 100 % at 55), 2 auto-high (1.25 x auto-low).
 const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, speed, saved, mode, sum; } fp;
 const char* FAN_MODES[] = {"manual", "auto-low", "auto-high"};
 int fanPm = 0, drawnMode = -1; bool fanModePublish = false, versionOn = false; unsigned long versionAt = 0;
@@ -782,11 +783,11 @@ void fanManual() {   // a manual speed change leaves auto; the caller updates th
     if (fp.mode) { fp.mode = 0; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); fanModePublish = true; drawnMode = -1; }
 }
 
-// Auto speed: estimated airflow 22 % at PM2.5 <= 5 ug/m3, +1.56 % per ug/m3 up to 100 % at 55; auto-high 1.25 x.
+// Auto speed: estimated airflow 20 % at PM2.5 <= 5 ug/m3, +1.6 % per ug/m3 up to 100 % at 55; auto-high 1.25 x.
 // Small changes wait for a 3 % difference so the fan does not hunt; the minimum and full speed are always reached.
 bool fanAuto(bool now) {   // sets currentSpeed; true if it changed (the caller then calls updateSystem)
     if (!fp.mode || !currentSpeed) return false;
-    float a = 22 + (fanPm - 5) * 1.56f; if (a < 22) a = 22; if (fp.mode == 2) a *= 1.25f;
+    float a = 20 + (fanPm - 5) * 1.6f; if (a < 20) a = 20; if (fp.mode == 2) a *= 1.25f;
     int t = fanSnap((int)(a + 0.5f));
     if (t == currentSpeed || !(now || abs(t - currentSpeed) >= 3 || t == FAN_MIN || t == 100)) return false;
     currentSpeed = t; return true;
