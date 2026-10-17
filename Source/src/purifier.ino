@@ -169,6 +169,7 @@ void setup() {
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
     pinMode(PIN_DISP_BL, OUTPUT); initRing(); fanLoad(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
+    pinMode(PIN_DISP_BL, OUTPUT); initRing(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
     pinMode(BTN_UP, INPUT_PULLUP); pinMode(BTN_DOWN, INPUT_PULLUP);
     pinMode(BTN_EXTRA, INPUT_PULLUP); pinMode(BTN_POWER, INPUT_PULLUP);
     
@@ -698,6 +699,7 @@ void updateSystem() {
     if (fanKeep() != fp.speed || savedSpeed != fp.saved) { fanSave = true; fanDirtyAt = millis(); }
     if (pwm && !lastPwm) { fanKick = true; fanKickAt = millis(); } if (!pwm) fanKick = false; lastPwm = pwm;
     analogWrite(PIN_FAN, fanKick ? max(pwm, 64) : pwm);
+    analogWrite(PIN_FAN, map(currentSpeed, 0, 100, 0, 255));
     if (!lightsOn) digitalWrite(PIN_DISP_BL, LOW);
     static bool lastLights = false;
     if (lightsOn != lastLights) { lastLights = lightsOn; for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn; ledPublish = true; }
@@ -744,6 +746,7 @@ void checkButton(int pin, int idx) {   // idx 0 +, 1 -, 2 A, 3 power; the lines 
             }
             else if (idx >= 2 && btnReps[idx] == 0) handlePress(pin);
             else if (fanHeld && idx < 2) { fanHeld = false; publishAll(); }
+            if (reading == LOW) handlePress(pin);
         }
     }
     else if (reading == LOW && idx == 3 && btnReps[3] == 0 && millis() - btnRepAt[3] >= 800) { btnReps[3] = 1; powerToggle(); }   // power held: unit on/off
