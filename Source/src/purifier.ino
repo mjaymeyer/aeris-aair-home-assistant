@@ -734,7 +734,7 @@ void handlePress(int pin) {
         else { if(savedSpeed < 1) savedSpeed = 25; currentSpeed = savedSpeed; lightsOn = true; }
     }
     else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=fp.step;lightsOn=true;}else currentSpeed+=fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
-    else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=fp.step;if(currentSpeed<=0){currentSpeed=0;lightsOn=false;}else savedSpeed=currentSpeed;} }
+    else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=fp.step;if(currentSpeed<=0)currentSpeed=0;else savedSpeed=currentSpeed;} }   // at 0 the screen stays on, showing OFF
     else if (pin == BTN_EXTRA) { lightsOn = !lightsOn; }
     updateSystem();
 }
