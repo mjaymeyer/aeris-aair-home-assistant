@@ -349,7 +349,7 @@ Buttons:
 | + / - | one step per press, repeating while held; changes an auto mode to manual. From 22 % a separate press of - turns the fan off (the screen stays on) |
 | A | next mode: manual, auto-low, auto-high (auto modes show under the % sign) |
 | Power, short press | screen (and ring and button lights) on / off |
-| Power, held 1 s | unit on / off |
+| Power, held 1 s | unit on / off (off also darkens the ring and button lights; their settings return when it turns on) |
 | A, held 2 s | firmware and Device OS versions for a few seconds |
 
 The firmware version follows [semantic versioning](https://semver.org); it is shown on the web page and

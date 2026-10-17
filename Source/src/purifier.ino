@@ -115,6 +115,7 @@ unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill 
 const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, speed, saved, mode, sum; } fp;
 const char* FAN_MODES[] = {"manual", "auto-low", "auto-high"};
 int fanPm = 0, drawnMode = -1; bool fanModePublish = false, versionOn = false; unsigned long versionAt = 0;
+bool unitOff = false;   // switched off (power held, fan/power/set OFF, fan/set 0): fan, screen, ring and button lights dark
 unsigned long fanDirtyAt = 0; bool fanSave = false;
 bool fanHeld = false, fanStepPublish = false;   // fanHeld: + / - held down, MQTT updates wait for the release
 unsigned long btnRepAt[4]; int btnReps[4];
@@ -246,7 +247,7 @@ void enterNormalMode() {
     WiFi.connect();
     webServer.begin(); 
     
-    currentSpeed = fp.speed; savedSpeed = fp.saved ? fp.saved : 25; lightsOn = currentSpeed > 0;   // resume the saved fan state
+    currentSpeed = fp.speed; savedSpeed = fp.saved ? fp.saved : 25; lightsOn = currentSpeed > 0; unitOff = !currentSpeed;   // resume the saved fan state
     updateSystem();
     drawDynamicValues();
 }
@@ -638,8 +639,8 @@ void ledsTick() {
             if (c) for (int e = 0; e < 4; e++) { if (tw[e]) { if (++tw[e] > 1200) tw[e] = 0; } else if (random(1500) == 0) tw[e] = 1; }
         }
     }
-    if (lp.on[0]) d[6] = d[0] = ledAt(ledFx(lp.fx[0], 0, 1, vt[0], cand[4], 0, lp.speed[0]), 0);
-    if (lp.on[1]) for (int e = 0; e < 4; e++) if (lp.mask & (1 << e))
+    if (lp.on[0] && !unitOff) d[6] = d[0] = ledAt(ledFx(lp.fx[0], 0, 1, vt[0], cand[4], 0, lp.speed[0]), 0);
+    if (lp.on[1] && !unitOff) for (int e = 0; e < 4; e++) if (lp.mask & (1 << e))
         d[2 + e] = ledAt(ledFx(lp.fx[1], e, 4, vt[1], cand[e], tw[e] < 600 ? tw[e] / 600.0f : (1200 - tw[e]) / 600.0f, lp.speed[1]), 1);
     for (int i = 0; i < 8; i++) ledDuty[i] = d[i];
 }
@@ -715,7 +716,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
         else {
             int s = message.toInt(); if (s > 0) fanManual(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = FAN_MIN;
             if(currentSpeed > 100) currentSpeed=100;
-            if(currentSpeed > 0) { savedSpeed = currentSpeed; lightsOn = true; } else lightsOn = false;
+            if(currentSpeed > 0) { savedSpeed = currentSpeed; lightsOn = true; } else lightsOn = false; unitOff = !currentSpeed;
         }
         updateSystem();
     }
@@ -782,8 +783,8 @@ bool fanAuto(bool now) {   // sets currentSpeed; true if it changed (the caller 
 int fanKeep() { return fp.mode && currentSpeed && fp.speed ? fp.speed : currentSpeed; }   // auto speeds are not saved (flash wear)
 
 void powerToggle() {   // unit on/off: long press of power, fan/power/set
-    if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
-    else { if (savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; fanAuto(true); }
+    if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; unitOff = true; }
+    else { if (savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; unitOff = false; fanAuto(true); }
     updateSystem();
 }
 
@@ -799,7 +800,7 @@ void showVersion() {   // A held 2 s: firmware and Device OS versions for 4 s
 
 void handlePress(int pin) {
     if (pin == BTN_POWER) lightsOn = !lightsOn;   // short press: screen on/off (long press: powerToggle)
-    else if (pin == BTN_UP) { fanManual(); if(currentSpeed==0){currentSpeed=FAN_MIN;lightsOn=true;}else currentSpeed=(currentSpeed/fp.step+1)*fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
+    else if (pin == BTN_UP) { fanManual(); if(currentSpeed==0){currentSpeed=FAN_MIN;lightsOn=true;unitOff=false;}else currentSpeed=(currentSpeed/fp.step+1)*fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
     else if (pin == BTN_DOWN) {   // next lower step; from the minimum a separate press (not a held repeat) turns the fan off, screen stays on
         fanManual();
         if (currentSpeed > FAN_MIN) { currentSpeed = (currentSpeed - 1) / fp.step * fp.step; if (currentSpeed < FAN_MIN) currentSpeed = FAN_MIN; savedSpeed = currentSpeed; }
