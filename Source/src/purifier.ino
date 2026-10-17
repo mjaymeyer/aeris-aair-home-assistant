@@ -148,7 +148,7 @@ void handleWebPortal();
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
 void fanLoad(); void fanSetStep(int s); int fanSnap(int pct); uint8_t fanSum();
-void fanSetMode(int m); void fanManual(); void fanAuto(bool now); int fanKeep(); void powerToggle(); void showVersion();
+void fanSetMode(int m); void fanManual(); bool fanAuto(bool now); int fanKeep(); void powerToggle(); void showVersion();
 void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
 void ledsChanged(); void publishLeds(); uint8_t ledSum();
 Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
@@ -320,7 +320,7 @@ void loop() {
         // 2. Update Global Strings (Source of Truth)
         lastPM25 = String(pm25Smooth);
         lastPM10 = String(pm10Smooth);
-        fanPm = pm25Smooth; fanAuto(false);   // auto modes follow the 5 s PM2.5 average
+        fanPm = pm25Smooth; if (fanAuto(false)) updateSystem();   // auto modes follow the 5 s PM2.5 average
 
         // 3. Update Screen
         if (lightsOn) drawDynamicValues();
@@ -766,15 +766,18 @@ void fanSetMode(int m) {
     fanAuto(true); updateSystem();
 }
 
-void fanManual() { if (fp.mode) fanSetMode(0); }   // a manual speed change leaves auto
+void fanManual() {   // a manual speed change leaves auto; the caller updates the fan and the screen
+    if (fp.mode) { fp.mode = 0; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); fanModePublish = true; drawnMode = -1; }
+}
 
 // Auto speed: estimated airflow 22 % at PM2.5 <= 5 ug/m3, +1.56 % per ug/m3 up to 100 % at 55; auto-high 1.25 x.
 // Small changes wait for a 3 % difference so the fan does not hunt; the minimum and full speed are always reached.
-void fanAuto(bool now) {
-    if (!fp.mode || !currentSpeed) return;
+bool fanAuto(bool now) {   // sets currentSpeed; true if it changed (the caller then calls updateSystem)
+    if (!fp.mode || !currentSpeed) return false;
     float a = 22 + (fanPm - 5) * 1.56f; if (a < 22) a = 22; if (fp.mode == 2) a *= 1.25f;
     int t = fanSnap((int)(a + 0.5f));
-    if (t != currentSpeed && (now || abs(t - currentSpeed) >= 3 || t == FAN_MIN || t == 100)) { currentSpeed = t; updateSystem(); }
+    if (t == currentSpeed || !(now || abs(t - currentSpeed) >= 3 || t == FAN_MIN || t == 100)) return false;
+    currentSpeed = t; return true;
 }
 
 int fanKeep() { return fp.mode && currentSpeed && fp.speed ? fp.speed : currentSpeed; }   // auto speeds are not saved (flash wear)
