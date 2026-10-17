@@ -18,7 +18,7 @@ This guide will walk you through flashing a new firmware onto the Aeris Aair 3-i
 
 ## Disclaimer
 
-The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant. I have included an example automation you can add to Home Assistant to do just this.
+The steps below are not complicated to do but make sure you read through everything before committing. The unit adjusts its fan speed to air quality on its own in the auto modes (see [Auto Modes](#auto-modes)), and everything can also be controlled over MQTT, for example from Home Assistant.
 
 <br>
 <br>
@@ -318,28 +318,49 @@ mqtt:
   fan:
     - name: "Aeris Air Purifier"
       state_topic: "aeris/purifier/fan/state"
-      command_topic: "aeris/purifier/fan/set"
+      command_topic: "aeris/purifier/fan/power/set"
+      payload_on: "ON"
+      payload_off: "OFF"
+      state_value_template: "{{ 'OFF' if value | int(0) == 0 else 'ON' }}"
       percentage_state_topic: "aeris/purifier/fan/state"
       percentage_command_topic: "aeris/purifier/fan/set"
       speed_range_min: 1
-      speed_range_max: 255
-      payload_on: "30"
-      payload_off: "0"
+      speed_range_max: 100
+      percentage_value_template: "{{ ((value | int(0)) / 2.55) | round(0) | int }}"
+      percentage_command_template: "{{ (value * 2.55) | round(0, 'ceil') | int }}"
+      preset_mode_state_topic: "aeris/purifier/fan/mode/state"
+      preset_mode_command_topic: "aeris/purifier/fan/mode/set"
+      preset_modes: [auto-low, auto-high]
+      preset_mode_value_template: "{{ 'None' if value == 'manual' else value }}"
       optimistic: false
-      state_value_template: >
-        {% if value == '0' %}
-          0
-        {% else %}
-          30
-        {% endif %}
 ```
+
+The fan speed percentage is the estimated share of the fan's maximum airflow: 20 % is the slowest speed it
+holds steadily, 100 % is full speed, and any lower non-zero setting runs at 20 %. Speeds move in steps of
+1 % by default; set the step (1-25 %) in the Fan section of the web page or with `fan/step/set` (retained
+state on `fan/step/state`). `fan/set` and `fan/state` still carry the percentage as 0-255; the two templates
+make Home Assistant show the same percentage as the unit. `fan/power/set` takes `ON` / `OFF` and keeps the
+mode; the fan state, mode and step are kept across reboots and power cuts.
+
+Buttons:
+
+| Button | Action |
+|---|---|
+| + / - | one step per press, repeating while held; changes an auto mode to manual. From 20 % a separate press of - turns the fan off (the screen stays on) |
+| A | next mode: manual, auto-low, auto-high (auto modes show under the % sign) |
+| Power, short press | screen (and ring and button lights) on / off |
+| Power, held 1 s | unit on / off (off also darkens the ring and button lights; their settings return when it turns on) |
+| A, held 2 s | firmware and Device OS versions for a few seconds |
+
+The firmware version follows [semantic versioning](https://semver.org); it is shown on the web page and
+published, retained, on `version`.
 
 PM2.5 and PM10 are the sensor's mass readings in µg/m³. Builds before this change published the
 sensor's particle-count channels instead, which read many times higher and jump with airflow, so
 readings (and automation thresholds tuned to them) drop after updating.
 
 The display, the ring and the button lights switch on and off together:
-press the display button, or publish `1` / `0` to `aeris/purifier/lights/set`.
+short-press power, or publish `1` / `0` to `aeris/purifier/lights/set`.
 
 #### Ring and Button Lights
 
@@ -408,38 +429,13 @@ dashboard dropdown):
       state_off: "OFF"
 ```
 
-#### Automation Yaml:
+#### Auto Modes
 
-Here's a basic yaml configuration that only executes if you haven't switched the purifier off. 
-It keeps a minimum fan speed of 10% up to a PM2.5 reading of 40. Above that it will take the reading *0.25 for the fan speed.
-
-```
-alias: Air Purifier Smart Control
-description: PM2.5-based control
-triggers:
-  - trigger: state
-    entity_id: sensor.aeris_purifier_pm25
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.to_state.state | int(0) > 40 or trigger.from_state.state | int(0) > 40 }}
-actions:
-  - condition: state
-    entity_id: fan.aeris_purifier
-    state: "on"
-  - action: fan.set_percentage
-    target:
-      entity_id: fan.aeris_purifier
-    data:
-      percentage: >
-        {% set pm = states('sensor.aeris_purifier_pm25') | int(0) %}
-        {% if pm <= 40 %}
-          10
-        {% else %}
-          {{ ([pm * 0.25, 100] | min) | int }}
-        {% endif %}
-mode: restart
-```
+The unit sets its own fan speed from its PM2.5 reading in the two auto modes, so no Home Assistant automation
+is needed. Auto-low runs at 20 % up to 5 µg/m³ and adds 1.6 % per µg/m³ up to 100 % at 55 µg/m³ (the start of
+the US EPA "unhealthy" range); auto-high gives 1.25 times that airflow. Switch modes with A, with the fan's preset in
+Home Assistant, or by publishing `manual`, `auto-low` or `auto-high` to `fan/mode/set` (retained state on
+`fan/mode/state`). Setting a speed with + / - or `fan/set` switches back to manual.
 
 ## Restoring Original Firmware
 
