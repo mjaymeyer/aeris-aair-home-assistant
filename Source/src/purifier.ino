@@ -753,7 +753,10 @@ void checkButton(int pin, int idx) {   // idx 0 +, 1 -, 2 A, 3 power; the lines 
     }
 }
 
-int fanSnap(int pct) { if (pct <= 0) return 0; int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, FAN_MIN, 100); }
+int fanSnap(int pct) {   // to the step; off, the minimum and full speed stay exact
+    if (pct <= 0) return 0; if (pct <= FAN_MIN) return FAN_MIN; if (pct >= 100) return 100;
+    int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, FAN_MIN, 100);
+}
 
 uint8_t fanSum() { return fp.magic ^ fp.step ^ fp.speed ^ fp.saved ^ fp.mode ^ 0x5A; }
 
