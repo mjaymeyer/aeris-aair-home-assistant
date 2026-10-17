@@ -150,7 +150,7 @@ void handleWebPortal();
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
 void fanLoad(); void fanSetStep(int s); int fanSnap(int pct); uint8_t fanSum();
-void fanSetMode(int m); void fanManual(); bool fanAuto(bool now); int fanKeep(); void powerToggle(); void showVersion();
+void fanSetMode(int m); void fanManual(); bool fanAuto(bool now); int fanKeep(); void powerSet(bool on); void powerToggle(); void showVersion();
 void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
 void ledsChanged(); void publishLeds(); uint8_t ledSum();
 Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
@@ -718,7 +718,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
         ledsChanged(); return;
     }
     if (t == pre + "fan/mode/set") { message.toLowerCase(); fanSetMode(message == "auto-high" ? 2 : message == "auto-low" ? 1 : message == "manual" ? 0 : message.toInt()); return; }
-    if (t == pre + "fan/power/set") { message.toUpperCase(); bool on = message == "ON" || message == "1"; if (on != (currentSpeed > 0)) powerToggle(); return; }
+    if (t == pre + "fan/power/set") { message.toUpperCase(); powerSet(message == "ON" || message == "1"); return; }
     if (t == pre + "fan/step/set") { fanSetStep(message.toInt()); return; }
     if (t.endsWith("/set")) {
         if (t.indexOf("lights") > -1) { lightsOn = (message.toInt() == 1); }
@@ -791,11 +791,13 @@ bool fanAuto(bool now) {   // sets currentSpeed; true if it changed (the caller 
 
 int fanKeep() { return fp.mode && currentSpeed && fp.speed ? fp.speed : currentSpeed; }   // auto speeds are not saved (flash wear)
 
-void powerToggle() {   // unit on/off: long press of power, fan/power/set
-    if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; unitOff = true; }
-    else { if (savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; unitOff = false; fanAuto(true); }
+void powerSet(bool on) {   // unit on/off (fan/power/set); off applies even when the fan is already stopped
+    if (!on) { if (currentSpeed > 0) savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; unitOff = true; }
+    else if (currentSpeed == 0) { if (savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; unitOff = false; fanAuto(true); }
     updateSystem();
 }
+
+void powerToggle() { powerSet(currentSpeed == 0); }   // power held
 
 void showVersion() {   // A held 2 s: firmware and Device OS versions for 4 s
     versionOn = true; versionAt = millis();
