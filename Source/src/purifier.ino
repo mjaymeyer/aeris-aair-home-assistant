@@ -96,6 +96,10 @@ TCPServer webServer(80);
 MQTT *client = NULL;
 String mqttClientId;
 
+// Fan PWM for 0, 5 ... 100 %: equal airflow steps from the slowest steady speed to full, measured by microphone
+// (PWM 17-26 all run at ~22 % of full speed; the fan stops below ~16 and needs 22 to start from standstill).
+const uint8_t FAN_PWM[21] = {0, 26, 29, 31, 33, 36, 42, 47, 53, 61, 71, 82, 93, 106, 121, 138, 156, 177, 200, 225, 255};
+unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
 int currentSpeed = 0;      
 int savedSpeed   = 25;     
 bool lightsOn    = true;   
@@ -228,6 +232,7 @@ void enterNormalMode() {
 }
 
 void loop() {
+    if (fanKick && millis() - fanKickAt > 500) { fanKick = false; analogWrite(PIN_FAN, FAN_PWM[constrain(currentSpeed, 0, 100) / 5]); }
     if (WiFi.listening()) return; 
 
     handleWebPortal();
@@ -633,7 +638,9 @@ void publishLeds() {
 }
 
 void updateSystem() {
-    analogWrite(PIN_FAN, map(currentSpeed, 0, 100, 0, 255));
+    static int lastPwm = 0; int pwm = FAN_PWM[constrain(currentSpeed, 0, 100) / 5];
+    if (pwm && !lastPwm) { fanKick = true; fanKickAt = millis(); } if (!pwm) fanKick = false; lastPwm = pwm;
+    analogWrite(PIN_FAN, fanKick ? max(pwm, 64) : pwm);
     int s = lightsOn ? HIGH : LOW;
     digitalWrite(PIN_DISP_BL, s);
     static bool lastLights = false;
