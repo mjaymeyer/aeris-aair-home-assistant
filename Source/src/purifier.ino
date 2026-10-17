@@ -122,6 +122,7 @@ int zeroCount = 0;          // Counts consecutive zeros
 
 // Prototypes
 void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* body, Writer* result, void* reserved);
+void savePending();
 void handleWebPortal(); 
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
@@ -259,7 +260,7 @@ void loop() {
     }
 
     checkButton(BTN_POWER, 3); checkButton(BTN_UP, 0); checkButton(BTN_DOWN, 1); checkButton(BTN_EXTRA, 2);
-    if (ledSave && millis() - ledDirty > 3000) { ledSave = false; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); }
+    if (ledSave && millis() - ledDirty > 3000) savePending();
 
     // --- SENSOR WATCHDOG ---
     // Only send wake commands if we haven't heard from the sensor for 10 seconds.
@@ -379,7 +380,7 @@ void handleWebPortal() {
                 client.println("<p>Device status LED will flash YELLOW. Connect USB to flash.</p>");
                 client.stop(); 
                 delay(1000); 
-                System.dfu(false); // Enter DFU mode
+                savePending(); System.dfu(false); // Enter DFU mode
                 return;
             }
             // ----------------------
@@ -411,7 +412,7 @@ void handleWebPortal() {
             if(pmvc.length()>0) mySettings.pmValueColor = pmvc.toInt();
             
             EEPROM.put(EEPROM_ADDR, mySettings);
-            client.println("<h1>Saved! Rebooting...</h1>"); client.stop(); delay(1000); System.reset();
+            client.println("<h1>Saved! Rebooting...</h1>"); client.stop(); savePending(); delay(1000); System.reset();
         } 
         else {
             client.print("<html><body style='font-family:sans-serif;padding:20px;'>");
@@ -452,12 +453,15 @@ void handleWebPortal() {
             for (int i = 0; i < 4; i++) client.print(String("<label><input type='checkbox' name='k") + String(i) + "' value='1'" + ((lp.mask >> i) & 1 ? " checked" : "") + "> " + bl[i] + "</label> ");
             client.print("<br><input type='submit' value='APPLY LIGHTS' style='padding:10px;width:100%;background:green;color:white;'></form>");
 
+            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='reboot' value='1'>");   // any unknown parameter: reboot, settings kept
+            client.print("<input type='submit' value='REBOOT' style='background:gray;color:white;padding:10px;width:100%;'></form>");
+
             // --- NEW: DFU BUTTON ---
-            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='dfu' value='1'>");
+            client.print("<hr><form action='/save' method='GET' onsubmit='return confirm(\"Enter DFU mode? The unit stops until it is flashed or power-cycled.\")'><input type='hidden' name='dfu' value='1'>");
             client.print("<input type='submit' value='ENTER DFU MODE' style='background:orange;color:white;padding:10px;width:100%;'></form>");
             // -----------------------
 
-            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='reset' value='1'>");
+            client.print("<hr><form action='/save' method='GET' onsubmit='return confirm(\"Factory reset? This erases the Wi-Fi and MQTT settings and restarts in setup mode.\")'><input type='hidden' name='reset' value='1'>");
             client.print("<input type='submit' value='FACTORY RESET' style='background:red;color:white;padding:10px;width:100%;'></form>");
             client.print("</body></html>");
         }
@@ -548,6 +552,9 @@ void initRing() {
 void writeRing(uint8_t v) {
     digitalWrite(PIN_RING_LATCH, LOW); shiftOut(PIN_RING_DATA, PIN_RING_CLK, LSBFIRST, v); digitalWrite(PIN_RING_LATCH, HIGH);
 }
+
+// Write settings whose save is still delayed (EEPROM wear), e.g. right before a restart.
+void savePending() { if (ledSave) { ledSave = false; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); } }
 
 uint8_t ledSum() { uint8_t s = 0x5A; for (unsigned i = 0; i < sizeof(lp) - 1; i++) s += ((uint8_t*)&lp)[i]; return s; }
 
