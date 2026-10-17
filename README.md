@@ -322,9 +322,9 @@ mqtt:
       percentage_state_topic: "aeris/purifier/fan/state"
       percentage_command_topic: "aeris/purifier/fan/set"
       speed_range_min: 1
-      speed_range_max: 20
-      percentage_value_template: "{{ ((value | int(0)) / 12.75) | round(0) | int }}"
-      percentage_command_template: "{{ (value * 12.75) | round(0, 'ceil') | int }}"
+      speed_range_max: 100
+      percentage_value_template: "{{ ((value | int(0)) / 2.55) | round(0) | int }}"
+      percentage_command_template: "{{ (value * 2.55) | round(0, 'ceil') | int }}"
       payload_on: "30"
       payload_off: "0"
       optimistic: false
@@ -336,10 +336,11 @@ mqtt:
         {% endif %}
 ```
 
-The fan runs in 20 steps of 5 %. Each step adds about the same airflow, from the slowest speed the fan
-holds steadily (5 %, about a fifth of full speed) up to full speed. `fan/set` and `fan/state` still carry the
-percentage as 0-255; `speed_range_max: 20` and the two templates make Home Assistant show the same
-percentage as the unit, in the same 5 % steps.
+The fan speed goes from 1 % (the slowest speed the fan holds steadily, about a fifth of full speed) to
+100 %, and each percent adds about the same airflow. Speeds move in steps of 1 % by default; set the step
+(1-25 %) in the Fan section of the web page or with `fan/step/set` (retained state on `fan/step/state`).
+The + and - buttons move one step per press and repeat while held. `fan/set` and `fan/state` still carry
+the percentage as 0-255; the two templates make Home Assistant show the same percentage as the unit.
 
 The display, the ring and the button lights switch on and off together:
 press the display button, or publish `1` / `0` to `aeris/purifier/lights/set`.

@@ -96,10 +96,19 @@ TCPServer webServer(80);
 MQTT *client = NULL;
 String mqttClientId;
 
-// Fan PWM for 0, 5 ... 100 %: equal airflow steps from the slowest steady speed to full, measured by microphone
+// Fan PWM for 0-100 %: equal airflow steps from the slowest steady speed (1 %) to full, measured by microphone
 // (PWM 17-26 all run at ~22 % of full speed; the fan stops below ~16 and needs 22 to start from standstill).
-const uint8_t FAN_PWM[21] = {0, 26, 29, 31, 33, 36, 42, 47, 53, 61, 71, 82, 93, 106, 121, 138, 156, 177, 200, 225, 255};
+const uint8_t FAN_PWM[101] = {
+    0, 26, 27, 27, 28, 28, 29, 29, 30, 30, 30, 31, 31, 31, 32, 32, 33, 33, 33, 34, 34,
+    36, 36, 38, 39, 40, 41, 42, 43, 44, 45, 45, 46, 47, 48, 49, 51, 52, 54, 55, 57, 58,
+    60, 61, 63, 65, 66, 68, 71, 74, 76, 77, 79, 81, 84, 86, 88, 90, 92, 95, 97, 100, 102,
+    105, 108, 110, 113, 116, 119, 122, 125, 128, 131, 134, 138, 141, 144, 148, 152, 155, 159, 163, 167, 171,
+    175, 179, 184, 188, 192, 197, 202, 206, 211, 216, 221, 226, 231, 236, 241, 247, 255};
 unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
+// Speed step in % (1-25, default 1) for the buttons, MQTT and the web page; saved at EEPROM 1088, outside Settings.
+const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, sum; } fp;
+bool fanHeld = false, fanStepPublish = false;   // fanHeld: + / - held down, MQTT updates wait for the release
+unsigned long btnRepAt[4]; int btnReps[4];
 int currentSpeed = 0;      
 int savedSpeed   = 25;     
 bool lightsOn    = true;   
@@ -129,6 +138,7 @@ void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* bo
 void handleWebPortal(); 
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
+void fanLoad(); void fanSetStep(int s); int fanSnap(int pct);
 void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
 void ledsChanged(); void publishLeds(); uint8_t ledSum();
 Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
@@ -145,7 +155,7 @@ void setup() {
     
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
-    pinMode(PIN_DISP_BL, OUTPUT); initRing(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
+    pinMode(PIN_DISP_BL, OUTPUT); initRing(); fanLoad(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
     pinMode(BTN_UP, INPUT_PULLDOWN); pinMode(BTN_DOWN, INPUT_PULLDOWN);
     pinMode(BTN_EXTRA, INPUT_PULLDOWN); pinMode(BTN_POWER, INPUT_PULLDOWN);
     
@@ -232,7 +242,7 @@ void enterNormalMode() {
 }
 
 void loop() {
-    if (fanKick && millis() - fanKickAt > 500) { fanKick = false; analogWrite(PIN_FAN, FAN_PWM[constrain(currentSpeed, 0, 100) / 5]); }
+    if (fanKick && millis() - fanKickAt > 500) { fanKick = false; analogWrite(PIN_FAN, FAN_PWM[constrain(currentSpeed, 0, 100)]); }
     if (WiFi.listening()) return; 
 
     handleWebPortal();
@@ -253,12 +263,14 @@ void loop() {
                     client->subscribe(String(mySettings.topic_prefix) + "lights/set");
                     client->subscribe(String(mySettings.topic_prefix) + "ring/set");
                     client->subscribe(String(mySettings.topic_prefix) + "buttons/set");
-                    ledPublish = true;
+                    client->subscribe(String(mySettings.topic_prefix) + "fan/step/set");
+                    ledPublish = true; fanStepPublish = true;
                     RGB.color(0, 255, 255); 
                 }
             } else {
                 client->loop();
                 if (ledPublish) { ledPublish = false; publishLeds(); }
+                if (fanStepPublish) { fanStepPublish = false; client->publish((String(mySettings.topic_prefix) + "fan/step/state").c_str(), String(fp.step).c_str(), true); }
             }
         }
     }
@@ -339,6 +351,11 @@ void handleWebPortal() {
         
         client.println("HTTP/1.1 200 OK"); client.println("Content-Type: text/html"); client.println("Connection: close"); client.println();
         
+        if (req.indexOf("GET /fan?") != -1) {
+            int i = req.indexOf("fs="); if (i != -1) fanSetStep(req.substring(i + 3).toInt());
+            client.print("<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Fan step applied.</body></html>");
+            client.stop(); return;
+        }
         if (req.indexOf("GET /leds?") != -1) {
             auto arg = [&](String k) -> String {
                 int s = req.indexOf("?" + k + "="); if (s == -1) s = req.indexOf("&" + k + "="); if (s == -1) return "";
@@ -444,6 +461,8 @@ void handleWebPortal() {
             
             client.print("<br><input type='submit' value='SAVE' style='padding:10px;width:100%;background:blue;color:white;'></form>");
             
+            client.print(String("<hr><h3>Fan</h3><form action='/fan' method='GET'>Speed step <input type='number' name='fs' min='1' max='25' step='1' value='") + String(fp.step)
+                + "' style='width:4em'>% (buttons, MQTT, web) <input type='submit' value='APPLY'></form>");
             client.print("<hr><h3>Lights</h3><form action='/leds' method='GET'>");
             for (int c = 0; c < 2; c++) {
                 String p = c ? "b" : "r";
@@ -638,7 +657,7 @@ void publishLeds() {
 }
 
 void updateSystem() {
-    static int lastPwm = 0; int pwm = FAN_PWM[constrain(currentSpeed, 0, 100) / 5];
+    static int lastPwm = 0; int pwm = FAN_PWM[constrain(currentSpeed, 0, 100)];
     if (pwm && !lastPwm) { fanKick = true; fanKickAt = millis(); } if (!pwm) fanKick = false; lastPwm = pwm;
     analogWrite(PIN_FAN, fanKick ? max(pwm, 64) : pwm);
     int s = lightsOn ? HIGH : LOW;
@@ -647,7 +666,7 @@ void updateSystem() {
     if (lightsOn != lastLights) { lastLights = lightsOn; for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn; ledPublish = true; }
     if(lightsOn) { if (drawnSpeed == -999) { tft.fillScreen(ILI9341_BLACK); drawnSpeed=-1; drawnPM25="-1"; } drawDynamicValues(); }
     else { drawnSpeed = -999; }
-    publishAll();
+    if (!fanHeld) publishAll();
 }
 
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
@@ -662,10 +681,11 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
             ledSet(c, String(it.name().data()), v.isBool() ? String(v.toBool() ? "true" : "false") : v.isNumber() ? String(v.toInt()) : String(v.toString().data())); } }
         ledsChanged(); return;
     }
+    if (t == pre + "fan/step/set") { fanSetStep(message.toInt()); return; }
     if (t.endsWith("/set")) {
         if (t.indexOf("lights") > -1) { lightsOn = (message.toInt() == 1); }
         else {
-            int s = message.toInt(); currentSpeed = map(s, 0, 255, 0, 100); currentSpeed = 5 * ((currentSpeed + 2)/5);
+            int s = message.toInt(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = fp.step;
             if(currentSpeed > 100) currentSpeed=100;
             if(currentSpeed > 0) { savedSpeed = currentSpeed; lightsOn = true; } else lightsOn = false;
         }
@@ -679,9 +699,27 @@ void checkButton(int pin, int idx) {
         delay(50); 
         if (digitalRead(pin) == reading) {
             lastBtnState[idx] = reading;
-            if (reading == HIGH) handlePress(pin);
+            if (reading == HIGH) { btnRepAt[idx] = millis(); btnReps[idx] = 0; handlePress(pin); }
+            else if (fanHeld && idx < 2) { fanHeld = false; publishAll(); }
         }
     }
+    else if (reading == HIGH && idx < 2) {   // + / - held: repeat after 0.4 s, then faster (about 20 % per second)
+        unsigned long fast = 50UL * fp.step, iv = btnReps[idx] == 0 ? 400 : btnReps[idx] < 5 ? (fast > 150 ? fast : 150) : fast;
+        if (millis() - btnRepAt[idx] >= iv) { btnRepAt[idx] = millis(); btnReps[idx]++; fanHeld = true; handlePress(pin); }
+    }
+}
+
+int fanSnap(int pct) { int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, 0, 100); }
+
+void fanLoad() {
+    EEPROM.get(FAN_ADDR, fp);
+    if (fp.magic != 0xF5 || fp.sum != (uint8_t)(fp.magic ^ fp.step ^ 0x5A) || fp.step < 1 || fp.step > 25) fp = FanPrefs{0xF5, 1, 0xF5 ^ 1 ^ 0x5A};
+}
+
+void fanSetStep(int s) {
+    fp.step = constrain(s, 1, 25); fp.sum = fp.magic ^ fp.step ^ 0x5A; EEPROM.put(FAN_ADDR, fp); fanStepPublish = true;
+    if (currentSpeed > 0) { int v = fanSnap(currentSpeed); currentSpeed = v < fp.step ? fp.step : v; savedSpeed = currentSpeed; }
+    updateSystem();
 }
 
 void handlePress(int pin) {
@@ -689,8 +727,8 @@ void handlePress(int pin) {
         if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
         else { if(savedSpeed < 10) savedSpeed = 10; currentSpeed = savedSpeed; lightsOn = true; }
     }
-    else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=5;lightsOn=true;}else currentSpeed+=5; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
-    else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=5;if(currentSpeed<=0){currentSpeed=0;lightsOn=false;}else savedSpeed=currentSpeed;} }
+    else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=fp.step;lightsOn=true;}else currentSpeed+=fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
+    else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=fp.step;if(currentSpeed<=0){currentSpeed=0;lightsOn=false;}else savedSpeed=currentSpeed;} }
     else if (pin == BTN_EXTRA) { lightsOn = !lightsOn; }
     updateSystem();
 }
