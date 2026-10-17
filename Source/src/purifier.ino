@@ -105,8 +105,10 @@ const uint8_t FAN_PWM[101] = {
     105, 108, 110, 113, 116, 119, 122, 125, 128, 131, 134, 138, 141, 144, 148, 152, 155, 159, 163, 167, 171,
     175, 179, 184, 188, 192, 197, 202, 206, 211, 216, 221, 226, 231, 236, 241, 247, 255};
 unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
-// Speed step in % (1-25, default 1) for the buttons, MQTT and the web page; saved at EEPROM 1088, outside Settings.
-const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, sum; } fp;
+// Speed step in % (1-25, default 1) for the buttons, MQTT and the web page, and the fan state to resume after a
+// reboot (speed, 0 = off, and the last running speed): saved at EEPROM 1088, outside Settings, 3 s after a change.
+const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, speed, saved, sum; } fp;
+unsigned long fanDirtyAt = 0; bool fanSave = false;
 bool fanHeld = false, fanStepPublish = false;   // fanHeld: + / - held down, MQTT updates wait for the release
 unsigned long btnRepAt[4]; int btnReps[4];
 int currentSpeed = 0;      
@@ -138,7 +140,7 @@ void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* bo
 void handleWebPortal(); 
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
-void fanLoad(); void fanSetStep(int s); int fanSnap(int pct);
+void fanLoad(); void fanSetStep(int s); int fanSnap(int pct); uint8_t fanSum();
 void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
 void ledsChanged(); void publishLeds(); uint8_t ledSum();
 Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
@@ -236,12 +238,13 @@ void enterNormalMode() {
     WiFi.connect();
     webServer.begin(); 
     
-    currentSpeed = 25; savedSpeed = 25; lightsOn = true;
+    currentSpeed = fp.speed; savedSpeed = fp.saved ? fp.saved : 25; lightsOn = currentSpeed > 0;   // resume the saved fan state
     updateSystem();
     drawDynamicValues();
 }
 
 void loop() {
+    if (fanSave && millis() - fanDirtyAt > 3000) { fanSave = false; fp.speed = currentSpeed; fp.saved = savedSpeed; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); }
     if (fanKick && millis() - fanKickAt > 500) { fanKick = false; analogWrite(PIN_FAN, FAN_PWM[constrain(currentSpeed, 0, 100)]); }
     if (WiFi.listening()) return; 
 
@@ -658,6 +661,7 @@ void publishLeds() {
 
 void updateSystem() {
     static int lastPwm = 0; int pwm = FAN_PWM[constrain(currentSpeed, 0, 100)];
+    if (currentSpeed != fp.speed || savedSpeed != fp.saved) { fanSave = true; fanDirtyAt = millis(); }
     if (pwm && !lastPwm) { fanKick = true; fanKickAt = millis(); } if (!pwm) fanKick = false; lastPwm = pwm;
     analogWrite(PIN_FAN, fanKick ? max(pwm, 64) : pwm);
     int s = lightsOn ? HIGH : LOW;
@@ -711,13 +715,15 @@ void checkButton(int pin, int idx) {
 
 int fanSnap(int pct) { int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, 0, 100); }
 
+uint8_t fanSum() { return fp.magic ^ fp.step ^ fp.speed ^ fp.saved ^ 0x5A; }
+
 void fanLoad() {
     EEPROM.get(FAN_ADDR, fp);
-    if (fp.magic != 0xF5 || fp.sum != (uint8_t)(fp.magic ^ fp.step ^ 0x5A) || fp.step < 1 || fp.step > 25) fp = FanPrefs{0xF5, 1, 0xF5 ^ 1 ^ 0x5A};
+    if (fp.magic != 0xF6 || fp.sum != fanSum() || fp.step < 1 || fp.step > 25 || fp.speed > 100 || fp.saved > 100) { fp = FanPrefs{0xF6, 1, 25, 25, 0}; fp.sum = fanSum(); }
 }
 
 void fanSetStep(int s) {
-    fp.step = constrain(s, 1, 25); fp.sum = fp.magic ^ fp.step ^ 0x5A; EEPROM.put(FAN_ADDR, fp); fanStepPublish = true;
+    fp.step = constrain(s, 1, 25); fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); fanStepPublish = true;
     if (currentSpeed > 0) { int v = fanSnap(currentSpeed); currentSpeed = v < fp.step ? fp.step : v; savedSpeed = currentSpeed; }
     updateSystem();
 }
@@ -725,7 +731,7 @@ void fanSetStep(int s) {
 void handlePress(int pin) {
     if (pin == BTN_POWER) {
         if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
-        else { if(savedSpeed < 10) savedSpeed = 10; currentSpeed = savedSpeed; lightsOn = true; }
+        else { if(savedSpeed < 1) savedSpeed = 25; currentSpeed = savedSpeed; lightsOn = true; }
     }
     else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=fp.step;lightsOn=true;}else currentSpeed+=fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
     else if (pin == BTN_DOWN) { if(currentSpeed>0){currentSpeed-=fp.step;if(currentSpeed<=0){currentSpeed=0;lightsOn=false;}else savedSpeed=currentSpeed;} }
