@@ -116,7 +116,7 @@ String lastPM25 = "0";
 String lastPM10 = "0";
 int drawnSpeed = -999;     
 String drawnPM25 = "-999"; 
-int lastBtnState[] = {0,0,0,0}; 
+int lastBtnState[] = {1,1,1,1};   // released: the panel's button lines are active-low (high at rest)
 byte rxBuffer[128];        
 int rxIndex = 0;
 unsigned long lastRxTime = 0; 
@@ -156,8 +156,8 @@ void setup() {
     pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_SENSOR_TX, OUTPUT); digitalWrite(PIN_SENSOR_TX, HIGH); 
     pinMode(PIN_DISP_BL, OUTPUT); initRing(); fanLoad(); ledTimer.start(); ledPwmTimer.begin(ledsPwm, 50, uSec, TIMER6);
-    pinMode(BTN_UP, INPUT_PULLDOWN); pinMode(BTN_DOWN, INPUT_PULLDOWN);
-    pinMode(BTN_EXTRA, INPUT_PULLDOWN); pinMode(BTN_POWER, INPUT_PULLDOWN);
+    pinMode(BTN_UP, INPUT_PULLUP); pinMode(BTN_DOWN, INPUT_PULLUP);
+    pinMode(BTN_EXTRA, INPUT_PULLUP); pinMode(BTN_POWER, INPUT_PULLUP);
     
     tft.begin(); tft.fillScreen(ILI9341_BLACK); tft.setRotation(3); 
     Serial1.begin(9600); RGB.control(true);
@@ -699,11 +699,11 @@ void checkButton(int pin, int idx) {
         delay(50); 
         if (digitalRead(pin) == reading) {
             lastBtnState[idx] = reading;
-            if (reading == HIGH) { btnRepAt[idx] = millis(); btnReps[idx] = 0; handlePress(pin); }
+            if (reading == LOW) { btnRepAt[idx] = millis(); btnReps[idx] = 0; handlePress(pin); }
             else if (fanHeld && idx < 2) { fanHeld = false; publishAll(); }
         }
     }
-    else if (reading == HIGH && idx < 2) {   // + / - held: repeat after 0.4 s, then faster (about 20 % per second)
+    else if (reading == LOW && idx < 2) {   // + / - held: repeat after 0.4 s, then faster (about 20 % per second)
         unsigned long fast = 50UL * fp.step, iv = btnReps[idx] == 0 ? 400 : btnReps[idx] < 5 ? (fast > 150 ? fast : 150) : fast;
         if (millis() - btnRepAt[idx] >= iv) { btnRepAt[idx] = millis(); btnReps[idx]++; fanHeld = true; handlePress(pin); }
     }
