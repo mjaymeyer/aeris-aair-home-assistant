@@ -497,12 +497,15 @@ void handleWebPortal() {
             for (int i = 0; i < 4; i++) client.print(String("<label><input type='checkbox' name='k") + String(i) + "' value='1'" + ((lp.mask >> i) & 1 ? " checked" : "") + "> " + bl[i] + "</label> ");
             client.print("<br><input type='submit' value='APPLY LIGHTS' style='padding:10px;width:100%;background:green;color:white;'></form>");
 
+            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='reboot' value='1'>");   // any unknown parameter: reboot, settings kept
+            client.print("<input type='submit' value='REBOOT' style='background:gray;color:white;padding:10px;width:100%;'></form>");
+
             // --- NEW: DFU BUTTON ---
-            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='dfu' value='1'>");
+            client.print("<hr><form action='/save' method='GET' onsubmit='return confirm(\"Enter DFU mode? The unit stops until it is flashed or power-cycled.\")'><input type='hidden' name='dfu' value='1'>");
             client.print("<input type='submit' value='ENTER DFU MODE' style='background:orange;color:white;padding:10px;width:100%;'></form>");
             // -----------------------
 
-            client.print("<hr><form action='/save' method='GET'><input type='hidden' name='reset' value='1'>");
+            client.print("<hr><form action='/save' method='GET' onsubmit='return confirm(\"Factory reset? This erases the Wi-Fi and MQTT settings and restarts in setup mode.\")'><input type='hidden' name='reset' value='1'>");
             client.print("<input type='submit' value='FACTORY RESET' style='background:red;color:white;padding:10px;width:100%;'></form>");
             client.print("</body></html>");
         }
