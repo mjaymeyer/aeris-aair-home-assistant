@@ -563,8 +563,7 @@ void drawDynamicValues() {
     if (drawnMode != fp.mode) {   // mode label under the % sign
         drawnMode = fp.mode; int ts = fSize / 5 > 0 ? fSize / 5 : 1, x = fX + 3 * 6 * fSize, y = fY + 8 * (fSize / 2) + 2;
         tft.fillRect(x, y, 4 * 6 * ts, 2 * 8 * ts + 2, ILI9341_BLACK); tft.setTextSize(ts); tft.setTextColor(mySettings.fanColor, ILI9341_BLACK);
-        tft.setCursor(x, y); tft.print(fp.mode ? "AUTO" : "MAN");
-        if (fp.mode) { tft.setCursor(x, y + 8 * ts + 2); tft.print(fp.mode == 1 ? "LOW" : "HIGH"); }
+        if (fp.mode) { tft.setCursor(x, y); tft.print("AUTO"); tft.setCursor(x, y + 8 * ts + 2); tft.print(fp.mode == 1 ? "LOW" : "HIGH"); }   // manual: no label
     }
     if (!lastPM25.equals(drawnPM25)) {
         drawnPM25 = lastPM25;
@@ -730,14 +729,14 @@ void checkButton(int pin, int idx) {   // idx 0 +, 1 -, 2 A, 3 power; the lines 
             lastBtnState[idx] = reading;
             if (reading == LOW) {
                 btnRepAt[idx] = millis(); btnReps[idx] = 0;
-                if (idx >= 2 && lastBtnState[5 - idx] == LOW) { btnReps[2] = btnReps[3] = 1; showVersion(); }   // power + A
-                else if (idx < 2) handlePress(pin);   // A and power act on release (combination, long press)
+                if (idx < 2) handlePress(pin);   // A and power act on release or when held (the panel reports one key at a time)
             }
             else if (idx >= 2 && btnReps[idx] == 0) handlePress(pin);
             else if (fanHeld && idx < 2) { fanHeld = false; publishAll(); }
         }
     }
-    else if (reading == LOW && idx == 3 && btnReps[3] == 0 && millis() - btnRepAt[3] >= 800) { btnReps[3] = 1; powerToggle(); }   // long power press
+    else if (reading == LOW && idx == 3 && btnReps[3] == 0 && millis() - btnRepAt[3] >= 800) { btnReps[3] = 1; powerToggle(); }   // power held: unit on/off
+    else if (reading == LOW && idx == 2 && btnReps[2] == 0 && millis() - btnRepAt[2] >= 2000) { btnReps[2] = 1; showVersion(); }   // A held: version
     else if (reading == LOW && idx < 2) {   // + / - held: repeat after 0.4 s, then faster (about 20 % per second)
         unsigned long fast = 50UL * fp.step, iv = btnReps[idx] == 0 ? 400 : btnReps[idx] < 5 ? (fast > 150 ? fast : 150) : fast;
         if (millis() - btnRepAt[idx] >= iv) { btnRepAt[idx] = millis(); btnReps[idx]++; fanHeld = true; handlePress(pin); }
@@ -788,7 +787,7 @@ void powerToggle() {   // unit on/off: long press of power, fan/power/set
     updateSystem();
 }
 
-void showVersion() {   // power + A: firmware and Device OS versions for 4 s
+void showVersion() {   // A held 2 s: firmware and Device OS versions for 4 s
     versionOn = true; versionAt = millis();
     String v = String(FW_VERSION), os = String("Device OS ") + System.version(); int w = tft.width();
     tft.fillScreen(ILI9341_BLACK); tft.setTextColor(mySettings.fanColor, ILI9341_BLACK);
