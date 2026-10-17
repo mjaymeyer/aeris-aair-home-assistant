@@ -4,6 +4,9 @@
 #include "softap_http.h"
 #include "SparkIntervalTimer.h"
 
+// Firmware version, semver (https://semver.org); "-dev" until released.
+const char* FW_VERSION = "6.0.0-dev";
+
 // -------------------------------------------------------------------------
 // 1. CONFIGURATION
 // -------------------------------------------------------------------------
@@ -106,9 +109,12 @@ const uint8_t FAN_PWM[101] = {   // 1-21 are never used (speeds snap to FAN_MIN)
     81, 84, 86, 89, 92, 95, 98, 102, 105, 108, 112, 115, 119, 123, 127, 131, 135, 139, 143, 148, 153,
     158, 162, 168, 173, 178, 183, 189, 195, 200, 206, 213, 219, 225, 232, 238, 245, 255};
 unsigned long fanKickAt = 0; bool fanKick = false;   // a start from standstill gets 0.5 s at PWM 64 or more
-// Speed step in % (1-25, default 1) for the buttons, MQTT and the web page, and the fan state to resume after a
-// reboot (speed, 0 = off, and the last running speed): saved at EEPROM 1088, outside Settings, 3 s after a change.
-const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, speed, saved, sum; } fp;
+// Saved at EEPROM 1088, outside Settings: speed step in % (1-25, default 1) for the buttons, MQTT and the web page;
+// the fan state to resume after a reboot (speed, 0 = off, and the last running speed; written 3 s after a change);
+// the mode: 0 manual, 1 auto-low (22 % at PM2.5 <= 5 ug/m3 up to 100 % at 55), 2 auto-high (1.25 x auto-low).
+const int FAN_ADDR = 1088; struct FanPrefs { uint8_t magic, step, speed, saved, mode, sum; } fp;
+const char* FAN_MODES[] = {"manual", "auto-low", "auto-high"};
+int fanPm = 0, drawnMode = -1; bool fanModePublish = false, versionOn = false; unsigned long versionAt = 0;
 unsigned long fanDirtyAt = 0; bool fanSave = false;
 bool fanHeld = false, fanStepPublish = false;   // fanHeld: + / - held down, MQTT updates wait for the release
 unsigned long btnRepAt[4]; int btnReps[4];
@@ -142,6 +148,7 @@ void handleWebPortal();
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
 void drawDynamicValues(); void updateSystem(); void checkButton(int pin, int idx); void handlePress(int pin);
 void fanLoad(); void fanSetStep(int s); int fanSnap(int pct); uint8_t fanSum();
+void fanSetMode(int m); void fanManual(); void fanAuto(bool now); int fanKeep(); void powerToggle(); void showVersion();
 void initRing(); void writeRing(uint8_t v); void ledsTick(); void ledsPwm(); void ledSet(int c, String k, String v);
 void ledsChanged(); void publishLeds(); uint8_t ledSum();
 Timer ledTimer(1, ledsTick); IntervalTimer ledPwmTimer;
@@ -245,7 +252,8 @@ void enterNormalMode() {
 }
 
 void loop() {
-    if (fanSave && millis() - fanDirtyAt > 3000) { fanSave = false; fp.speed = currentSpeed; fp.saved = savedSpeed; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); }
+    if (fanSave && millis() - fanDirtyAt > 3000) { fanSave = false; fp.speed = fanKeep(); fp.saved = savedSpeed; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); }
+    if (versionOn && millis() - versionAt > 4000) { versionOn = false; drawnSpeed = -999; updateSystem(); }
     if (fanKick && millis() - fanKickAt > 500) { fanKick = false; analogWrite(PIN_FAN, FAN_PWM[constrain(currentSpeed, 0, 100)]); }
     if (WiFi.listening()) return; 
 
@@ -268,13 +276,17 @@ void loop() {
                     client->subscribe(String(mySettings.topic_prefix) + "ring/set");
                     client->subscribe(String(mySettings.topic_prefix) + "buttons/set");
                     client->subscribe(String(mySettings.topic_prefix) + "fan/step/set");
-                    ledPublish = true; fanStepPublish = true;
+                    client->subscribe(String(mySettings.topic_prefix) + "fan/mode/set");
+                    client->subscribe(String(mySettings.topic_prefix) + "fan/power/set");
+                    client->publish((String(mySettings.topic_prefix) + "version").c_str(), FW_VERSION, true);
+                    ledPublish = true; fanStepPublish = true; fanModePublish = true;
                     RGB.color(0, 255, 255); 
                 }
             } else {
                 client->loop();
                 if (ledPublish) { ledPublish = false; publishLeds(); }
                 if (fanStepPublish) { fanStepPublish = false; client->publish((String(mySettings.topic_prefix) + "fan/step/state").c_str(), String(fp.step).c_str(), true); }
+                if (fanModePublish) { fanModePublish = false; client->publish((String(mySettings.topic_prefix) + "fan/mode/state").c_str(), FAN_MODES[fp.mode], true); }
             }
         }
     }
@@ -308,6 +320,7 @@ void loop() {
         // 2. Update Global Strings (Source of Truth)
         lastPM25 = String(pm25Smooth);
         lastPM10 = String(pm10Smooth);
+        fanPm = pm25Smooth; fanAuto(false);   // auto modes follow the 5 s PM2.5 average
 
         // 3. Update Screen
         if (lightsOn) drawDynamicValues();
@@ -357,7 +370,8 @@ void handleWebPortal() {
         
         if (req.indexOf("GET /fan?") != -1) {
             int i = req.indexOf("fs="); if (i != -1) fanSetStep(req.substring(i + 3).toInt());
-            client.print("<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Fan step applied.</body></html>");
+            i = req.indexOf("fm="); if (i != -1) fanSetMode(req.substring(i + 3).toInt());
+            client.print("<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Fan settings applied.</body></html>");
             client.stop(); return;
         }
         if (req.indexOf("GET /leds?") != -1) {
@@ -441,7 +455,7 @@ void handleWebPortal() {
         } 
         else {
             client.print("<html><body style='font-family:sans-serif;padding:20px;'>");
-            client.print("<h2>Configuration</h2><form action='/save' method='GET'>");
+            client.print(String("<h2>Configuration</h2><p>Firmware ") + FW_VERSION + "</p><form action='/save' method='GET'>");
             
             client.print("<h3>MQTT</h3>");
             client.print("<b>IP:</b><br><input name='mi' value='"); client.print(mySettings.mqtt_ip); client.print("'><br>");
@@ -465,8 +479,10 @@ void handleWebPortal() {
             
             client.print("<br><input type='submit' value='SAVE' style='padding:10px;width:100%;background:blue;color:white;'></form>");
             
-            client.print(String("<hr><h3>Fan</h3><form action='/fan' method='GET'>Speed step <input type='number' name='fs' min='1' max='25' step='1' value='") + String(fp.step)
-                + "' style='width:4em'>% (buttons, MQTT, web) <input type='submit' value='APPLY'></form>");
+            client.print("<hr><h3>Fan</h3><form action='/fan' method='GET'>Mode <select name='fm'>");
+            for (int m = 0; m < 3; m++) client.print(String("<option value='") + String(m) + "'" + (fp.mode == m ? " selected" : "") + ">" + FAN_MODES[m] + "</option>");
+            client.print(String("</select> Speed step <input type='number' name='fs' min='1' max='25' step='1' value='") + String(fp.step)
+                + "' style='width:4em'>% <input type='submit' value='APPLY'></form>");
             client.print("<hr><h3>Lights</h3><form action='/leds' method='GET'>");
             for (int c = 0; c < 2; c++) {
                 String p = c ? "b" : "r";
@@ -522,7 +538,7 @@ void http_handler(const char* url, ResponseCallback* cb, void* cbArg, Reader* bo
 }
 
 void drawDynamicValues() {
-    if (!lightsOn) return; 
+    if (!lightsOn || versionOn) return;
     
     // Use settings from struct
     int fSize = mySettings.fanFontSize;
@@ -531,7 +547,7 @@ void drawDynamicValues() {
     int pX = mySettings.pmX; int pY = mySettings.pmY;
 
     if (currentSpeed != drawnSpeed) {
-        drawnSpeed = currentSpeed;
+        drawnSpeed = currentSpeed; drawnMode = -1;
         tft.setCursor(fX, fY); tft.setTextColor(mySettings.fanColor, ILI9341_BLACK); tft.setTextSize(fSize); 
         if (currentSpeed == 0) { 
             tft.print("OFF"); 
@@ -543,6 +559,12 @@ void drawDynamicValues() {
             tft.setTextSize(fSize / 2); // Make the % symbol smaller
             tft.print("% "); 
         }
+    }
+    if (drawnMode != fp.mode) {   // mode label under the % sign
+        drawnMode = fp.mode; int ts = fSize / 5 > 0 ? fSize / 5 : 1, x = fX + 3 * 6 * fSize, y = fY + 8 * (fSize / 2) + 2;
+        tft.fillRect(x, y, 4 * 6 * ts, 2 * 8 * ts + 2, ILI9341_BLACK); tft.setTextSize(ts); tft.setTextColor(mySettings.fanColor, ILI9341_BLACK);
+        tft.setCursor(x, y); tft.print(fp.mode ? "AUTO" : "MAN");
+        if (fp.mode) { tft.setCursor(x, y + 8 * ts + 2); tft.print(fp.mode == 1 ? "LOW" : "HIGH"); }
     }
     if (!lastPM25.equals(drawnPM25)) {
         drawnPM25 = lastPM25;
@@ -662,7 +684,7 @@ void publishLeds() {
 
 void updateSystem() {
     static int lastPwm = 0; int pwm = FAN_PWM[constrain(currentSpeed, 0, 100)];
-    if (currentSpeed != fp.speed || savedSpeed != fp.saved) { fanSave = true; fanDirtyAt = millis(); }
+    if (fanKeep() != fp.speed || savedSpeed != fp.saved) { fanSave = true; fanDirtyAt = millis(); }
     if (pwm && !lastPwm) { fanKick = true; fanKickAt = millis(); } if (!pwm) fanKick = false; lastPwm = pwm;
     analogWrite(PIN_FAN, fanKick ? max(pwm, 64) : pwm);
     int s = lightsOn ? HIGH : LOW;
@@ -686,11 +708,13 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
             ledSet(c, String(it.name().data()), v.isBool() ? String(v.toBool() ? "true" : "false") : v.isNumber() ? String(v.toInt()) : String(v.toString().data())); } }
         ledsChanged(); return;
     }
+    if (t == pre + "fan/mode/set") { message.toLowerCase(); fanSetMode(message == "auto-high" ? 2 : message == "auto-low" ? 1 : message == "manual" ? 0 : message.toInt()); return; }
+    if (t == pre + "fan/power/set") { message.toUpperCase(); bool on = message == "ON" || message == "1"; if (on != (currentSpeed > 0)) powerToggle(); return; }
     if (t == pre + "fan/step/set") { fanSetStep(message.toInt()); return; }
     if (t.endsWith("/set")) {
         if (t.indexOf("lights") > -1) { lightsOn = (message.toInt() == 1); }
         else {
-            int s = message.toInt(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = FAN_MIN;
+            int s = message.toInt(); if (s > 0) fanManual(); currentSpeed = fanSnap(map(s, 0, 255, 0, 100)); if (s > 0 && currentSpeed == 0) currentSpeed = FAN_MIN;
             if(currentSpeed > 100) currentSpeed=100;
             if(currentSpeed > 0) { savedSpeed = currentSpeed; lightsOn = true; } else lightsOn = false;
         }
@@ -698,16 +722,22 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     }
 }
 
-void checkButton(int pin, int idx) {
+void checkButton(int pin, int idx) {   // idx 0 +, 1 -, 2 A, 3 power; the lines are active-low
     int reading = digitalRead(pin);
     if (reading != lastBtnState[idx]) {
         delay(50); 
         if (digitalRead(pin) == reading) {
             lastBtnState[idx] = reading;
-            if (reading == LOW) { btnRepAt[idx] = millis(); btnReps[idx] = 0; handlePress(pin); }
+            if (reading == LOW) {
+                btnRepAt[idx] = millis(); btnReps[idx] = 0;
+                if (idx >= 2 && lastBtnState[5 - idx] == LOW) { btnReps[2] = btnReps[3] = 1; showVersion(); }   // power + A
+                else if (idx < 2) handlePress(pin);   // A and power act on release (combination, long press)
+            }
+            else if (idx >= 2 && btnReps[idx] == 0) handlePress(pin);
             else if (fanHeld && idx < 2) { fanHeld = false; publishAll(); }
         }
     }
+    else if (reading == LOW && idx == 3 && btnReps[3] == 0 && millis() - btnRepAt[3] >= 800) { btnReps[3] = 1; powerToggle(); }   // long power press
     else if (reading == LOW && idx < 2) {   // + / - held: repeat after 0.4 s, then faster (about 20 % per second)
         unsigned long fast = 50UL * fp.step, iv = btnReps[idx] == 0 ? 400 : btnReps[idx] < 5 ? (fast > 150 ? fast : 150) : fast;
         if (millis() - btnRepAt[idx] >= iv) { btnRepAt[idx] = millis(); btnReps[idx]++; fanHeld = true; handlePress(pin); }
@@ -716,11 +746,11 @@ void checkButton(int pin, int idx) {
 
 int fanSnap(int pct) { if (pct <= 0) return 0; int s = fp.step; pct = s * ((pct + s / 2) / s); return constrain(pct, FAN_MIN, 100); }
 
-uint8_t fanSum() { return fp.magic ^ fp.step ^ fp.speed ^ fp.saved ^ 0x5A; }
+uint8_t fanSum() { return fp.magic ^ fp.step ^ fp.speed ^ fp.saved ^ fp.mode ^ 0x5A; }
 
 void fanLoad() {
     EEPROM.get(FAN_ADDR, fp);
-    if (fp.magic != 0xF6 || fp.sum != fanSum() || fp.step < 1 || fp.step > 25 || fp.speed > 100 || fp.saved > 100) { fp = FanPrefs{0xF6, 1, 25, 25, 0}; fp.sum = fanSum(); }
+    if (fp.magic != 0xF7 || fp.sum != fanSum() || fp.step < 1 || fp.step > 25 || fp.speed > 100 || fp.saved > 100 || fp.mode > 2) { fp = FanPrefs{0xF7, 1, 25, 25, 0, 0}; fp.sum = fanSum(); }
     if (fp.speed && fp.speed < FAN_MIN) fp.speed = FAN_MIN; if (fp.saved && fp.saved < FAN_MIN) fp.saved = FAN_MIN;
 }
 
@@ -730,17 +760,50 @@ void fanSetStep(int s) {
     updateSystem();
 }
 
+void fanSetMode(int m) {
+    m = constrain(m, 0, 2); if (m == fp.mode) return;
+    fp.mode = m; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); fanModePublish = true; drawnMode = -1;
+    fanAuto(true); updateSystem();
+}
+
+void fanManual() { if (fp.mode) fanSetMode(0); }   // a manual speed change leaves auto
+
+// Auto speed: estimated airflow 22 % at PM2.5 <= 5 ug/m3, +1.56 % per ug/m3 up to 100 % at 55; auto-high 1.25 x.
+// Small changes wait for a 3 % difference so the fan does not hunt; the minimum and full speed are always reached.
+void fanAuto(bool now) {
+    if (!fp.mode || !currentSpeed) return;
+    float a = 22 + (fanPm - 5) * 1.56f; if (a < 22) a = 22; if (fp.mode == 2) a *= 1.25f;
+    int t = fanSnap((int)(a + 0.5f));
+    if (t != currentSpeed && (now || abs(t - currentSpeed) >= 3 || t == FAN_MIN || t == 100)) { currentSpeed = t; updateSystem(); }
+}
+
+int fanKeep() { return fp.mode && currentSpeed && fp.speed ? fp.speed : currentSpeed; }   // auto speeds are not saved (flash wear)
+
+void powerToggle() {   // unit on/off: long press of power, fan/power/set
+    if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
+    else { if (savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; fanAuto(true); }
+    updateSystem();
+}
+
+void showVersion() {   // power + A: firmware and Device OS versions for 4 s
+    versionOn = true; versionAt = millis();
+    String v = String(FW_VERSION), os = String("Device OS ") + System.version(); int w = tft.width();
+    tft.fillScreen(ILI9341_BLACK); tft.setTextColor(mySettings.fanColor, ILI9341_BLACK);
+    tft.setTextSize(2); tft.setCursor((w - 8 * 12) / 2, 78); tft.print("FIRMWARE");
+    tft.setTextSize(3); tft.setCursor((w - (int)v.length() * 18) / 2, 104); tft.print(v);
+    tft.setTextSize(2); tft.setCursor((w - (int)os.length() * 12) / 2, 142); tft.print(os);
+    digitalWrite(PIN_DISP_BL, HIGH);
+}
+
 void handlePress(int pin) {
-    if (pin == BTN_POWER) {
-        if (currentSpeed > 0) { savedSpeed = currentSpeed; currentSpeed = 0; lightsOn = false; }
-        else { if(savedSpeed < FAN_MIN) savedSpeed = FAN_MIN; currentSpeed = savedSpeed; lightsOn = true; }
-    }
-    else if (pin == BTN_UP) { if(currentSpeed==0){currentSpeed=FAN_MIN;lightsOn=true;}else currentSpeed=(currentSpeed/fp.step+1)*fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
+    if (pin == BTN_POWER) lightsOn = !lightsOn;   // short press: screen on/off (long press: powerToggle)
+    else if (pin == BTN_UP) { fanManual(); if(currentSpeed==0){currentSpeed=FAN_MIN;lightsOn=true;}else currentSpeed=(currentSpeed/fp.step+1)*fp.step; if(currentSpeed>100)currentSpeed=100; savedSpeed=currentSpeed; }
     else if (pin == BTN_DOWN) {   // next lower step; from the minimum a separate press (not a held repeat) turns the fan off, screen stays on
+        fanManual();
         if (currentSpeed > FAN_MIN) { currentSpeed = (currentSpeed - 1) / fp.step * fp.step; if (currentSpeed < FAN_MIN) currentSpeed = FAN_MIN; savedSpeed = currentSpeed; }
         else if (currentSpeed > 0 && !fanHeld) currentSpeed = 0;
     }
-    else if (pin == BTN_EXTRA) { lightsOn = !lightsOn; }
+    else if (pin == BTN_EXTRA) { lightsOn = true; fanSetMode((fp.mode + 1) % 3); }   // A: next mode
     updateSystem();
 }
 
