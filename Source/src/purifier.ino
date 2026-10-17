@@ -604,7 +604,10 @@ void writeRing(uint8_t v) {
 }
 
 // Write settings whose save is still delayed (EEPROM wear), e.g. right before a restart.
-void savePending() { if (ledSave) { ledSave = false; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); } }
+void savePending() {
+    if (ledSave) { ledSave = false; lp.sum = ledSum(); EEPROM.put(LED_ADDR, lp); }
+    if (fanSave) { fanSave = false; fp.speed = fanKeep(); fp.saved = savedSpeed; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); }
+}
 
 uint8_t ledSum() { uint8_t s = 0x5A; for (unsigned i = 0; i < sizeof(lp) - 1; i++) s += ((uint8_t*)&lp)[i]; return s; }
 
