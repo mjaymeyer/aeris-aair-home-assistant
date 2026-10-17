@@ -18,7 +18,7 @@ This guide will walk you through flashing a new firmware onto the Aeris Aair 3-i
 
 ## Disclaimer
 
-The steps below are not complicated to do but make sure you read through everything before committing. In terms of feature loss, there is no built in logic to adjust fan speed based on air quality. Since the device can be controlled over MQTT now that logic can be done via Home Assistant. I have included an example automation you can add to Home Assistant to do just this.
+The steps below are not complicated to do but make sure you read through everything before committing. The unit adjusts its fan speed to air quality on its own in the auto modes (see [Auto Modes](#auto-modes)), and everything can also be controlled over MQTT, for example from Home Assistant.
 
 <br>
 <br>
@@ -355,6 +355,10 @@ Buttons:
 The firmware version follows [semantic versioning](https://semver.org); it is shown on the web page and
 published, retained, on `version`.
 
+PM2.5 and PM10 are the sensor's mass readings in µg/m³. Builds before this change published the
+sensor's particle-count channels instead, which read many times higher and jump with airflow, so
+readings (and automation thresholds tuned to them) drop after updating.
+
 The display, the ring and the button lights switch on and off together:
 short-press power, or publish `1` / `0` to `aeris/purifier/lights/set`.
 
@@ -429,7 +433,7 @@ dashboard dropdown):
 
 The unit sets its own fan speed from its PM2.5 reading in the two auto modes, so no Home Assistant automation
 is needed. Auto-low runs at 22 % up to 5 µg/m³ and adds 1.56 % per µg/m³ up to 100 % at 55 µg/m³ (the start of
-the US EPA "unhealthy" range); auto-high runs 1.25 times faster. Switch modes with A, with the fan's preset in
+the US EPA "unhealthy" range); auto-high gives 1.25 times that airflow. Switch modes with A, with the fan's preset in
 Home Assistant, or by publishing `manual`, `auto-low` or `auto-high` to `fan/mode/set` (retained state on
 `fan/mode/state`). Setting a speed with + / - or `fan/set` switches back to manual.
 
