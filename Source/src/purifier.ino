@@ -634,11 +634,10 @@ void publishLeds() {
 
 void updateSystem() {
     analogWrite(PIN_FAN, map(currentSpeed, 0, 100, 0, 255));
-    int s = lightsOn ? HIGH : LOW;
-    digitalWrite(PIN_DISP_BL, s);
+    if (!lightsOn) digitalWrite(PIN_DISP_BL, LOW);
     static bool lastLights = false;
     if (lightsOn != lastLights) { lastLights = lightsOn; for (int c = 0; c < 2; c++) if (lp.follow[c]) lp.on[c] = lightsOn; ledPublish = true; }
-    if(lightsOn) { if (drawnSpeed == -999) { tft.fillScreen(ILI9341_BLACK); drawnSpeed=-1; drawnPM25="-1"; } drawDynamicValues(); }
+    if(lightsOn) { if (drawnSpeed == -999) { tft.fillScreen(ILI9341_BLACK); drawnSpeed=-1; drawnPM25="-1"; } drawDynamicValues(); digitalWrite(PIN_DISP_BL, HIGH); }   // backlight on after the redraw
     else { drawnSpeed = -999; }
     publishAll();
 }
