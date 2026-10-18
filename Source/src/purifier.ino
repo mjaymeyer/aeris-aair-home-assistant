@@ -83,8 +83,9 @@ const char* LED_FX[] = {"solid", "blink", "breathe", "pulse", "candle", "chase",
 const int LED_FX_N = 10, LED_ADDR = 1024;
 struct LedPrefs { uint8_t magic, on[2], bright[2], fx[2], follow[2], mask, speed[2], sum; };
 LedPrefs lp; volatile uint8_t ledDuty[8]; uint8_t ledGamma[2][256], ledLum[2][256], ledHi[2], ledLo[2];
-// Full level per channel in PWM slots of one line: the buttons add their shared line (bit 1), which at full is as
-// bright as 64/128 on a button's own line (matched by eye)
+// Full level in PWM slots of one line, per scale: 0 one line; 1 the buttons plus their shared line (bit 1), which at
+// full is as bright as 64/128 on a button's own line (matched by eye). Scale 1 only when that line lights all four
+// buttons alike: all four on, effect solid, blink, breathe or pulse
 const int LED_SHARED = 64, LED_TOP[2] = {128, 128 + LED_SHARED};
 unsigned long ledDirty = 0; bool ledSave = false, ledPublish = false;
 const int BTN_UP        = D1;
@@ -596,8 +597,8 @@ void initRing() {
     pinMode(PIN_RING_DATA, OUTPUT); pinMode(PIN_RING_CLK, OUTPUT); pinMode(PIN_RING_LATCH, OUTPUT);
     digitalWrite(PIN_RING_LATCH, HIGH); writeRing(0);
     // brightness 1-255 -> level 7 to the channel's full level (gamma 2.2; 7 is the dimmest useful level, chosen by eye); lightness -> level
-    for (int c = 0; c < 2; c++) { int top = LED_TOP[c]; ledLo[c] = 255 * powf(3.0f / top, 1 / 2.2f) + 0.5f;
-        for (int i = 0; i < 256; i++) { ledGamma[c][i] = i ? 7 + (int)(powf((i - 1) / 254.0f, 2.2f) * (top - 7) + 0.5f) : 0; ledLum[c][i] = powf(i / 255.0f, 2.2f) * top + 0.5f; } }
+    for (int k = 0; k < 2; k++) { int top = LED_TOP[k]; ledLo[k] = 255 * powf(3.0f / top, 1 / 2.2f) + 0.5f;
+        for (int i = 0; i < 256; i++) { ledGamma[k][i] = i ? 7 + (int)(powf((i - 1) / 254.0f, 2.2f) * (top - 7) + 0.5f) : 0; ledLum[k][i] = powf(i / 255.0f, 2.2f) * top + 0.5f; } }
     EEPROM.get(LED_ADDR, lp);
     if (lp.magic != 0xA8 || lp.sum != ledSum() || lp.fx[0] > 4 || lp.fx[1] >= LED_FX_N || lp.speed[0] < 10 || lp.speed[1] < 10)
         lp = LedPrefs{0xA8, {0, 0}, {255, 255}, {0, 0}, {1, 1}, 15, {100, 100}, 0};
@@ -615,12 +616,14 @@ void savePending() {
     if (fanSave) { fanSave = false; fp.speed = fanKeep(); fp.saved = savedSpeed; fp.sum = fanSum(); EEPROM.put(FAN_ADDR, fp); }
 }
 
+int ledScale(int c) { return c && lp.fx[1] < 4 && lp.mask == 15; }
+
 uint8_t ledSum() { uint8_t s = 0x5A; for (unsigned i = 0; i < sizeof(lp) - 1; i++) s += ((uint8_t*)&lp)[i]; return s; }
 
 // Effect lightness 0..1 -> level: brief zero, then from just-visible (level 3, lightness ledLo) up to the channel level.
 uint8_t ledAt(float l, int c) {
-    if (l <= 0) return 0; if (l >= 1) return ledGamma[c][lp.bright[c]];
-    uint8_t hi = ledHi[c], lo = hi < ledLo[c] ? hi : ledLo[c]; return ledLum[c][(uint8_t)(lo + (hi - lo) * l)];
+    int k = ledScale(c); if (l <= 0) return 0; if (l >= 1) return ledGamma[k][lp.bright[c]];
+    uint8_t hi = ledHi[c], lo = hi < ledLo[k] ? hi : ledLo[k]; return ledLum[k][(uint8_t)(lo + (hi - lo) * l)];
 }
 
 // Lightness 0..1 of light e of n at time t (ms). Multi-light effects (5+) on a single light are solid.
@@ -686,7 +689,7 @@ void ledSet(int c, String k, String v) {
 
 // After changes: recompute the brightness range, save in 3 s (EEPROM wear), publish the retained state.
 void ledsChanged() {
-    for (int c = 0; c < 2; c++) ledHi[c] = 255 * powf(ledGamma[c][lp.bright[c]] / (float)LED_TOP[c], 1 / 2.2f) + 0.5f;
+    for (int c = 0; c < 2; c++) { int k = ledScale(c); ledHi[c] = 255 * powf(ledGamma[k][lp.bright[c]] / (float)LED_TOP[k], 1 / 2.2f) + 0.5f; }
     ledDirty = millis(); ledSave = true; ledPublish = true;
 }
 

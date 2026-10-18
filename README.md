@@ -374,7 +374,7 @@ on `ring/state` and `buttons/state`. Any subset of these keys works:
 | Key | Values |
 |---|---|
 | `state` | `"ON"` / `"OFF"` |
-| `brightness` | `1` to `255` (`1` is the dimmest useful level). On the buttons the top of the range also uses a light line shared by all four, so it adds light only while all four are lit |
+| `brightness` | `1` to `255` (`1` is the dimmest useful level). On the buttons, with all four button lights on and effect `solid`, `blink`, `breathe` or `pulse`, the range also uses a light line shared by all four and reaches about 1.5 times the brightness |
 | `effect` | `solid`, `blink`, `breathe`, `pulse`, `candle`; buttons also `chase`, `bounce`, `fill`, `wave`, `twinkle` |
 | `speed` | effect speed in percent, `10` to `250` (default `100`) |
 | `follow` | `true` (default): switches on and off with the display; `false`: only by its own `state` |
